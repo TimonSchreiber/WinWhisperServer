@@ -1,0 +1,6 @@
+@MyWhisperApp_HostAddress = http://localhost:5162
+
+GET {{MyWhisperApp_HostAddress}}/api/upload
+Accept: application/json
+
+###
