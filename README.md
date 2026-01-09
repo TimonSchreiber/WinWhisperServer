@@ -8,7 +8,7 @@ A web-based speech-to-text transcription service powered by [Faster Whisper XXL]
 - Real-time progress tracking
 - Download results as `.srt` (subtitles) or `.txt` (plain text)
 - Background job processing (non-blocking)
-- Works on company intranet
+- Can run as Windows Service
 
 ---
 
@@ -128,9 +128,37 @@ MyWhisperApp/
 ├── uploads/                    # Temporary upload directory (auto-created)
 ├── whisper/                    # Development: Faster Whisper location
 ├── Program.cs                  # Backend source code
+├── appsettings.json            # Config file
 ├── MyWhisperApp.csproj
 └── README.md
 ```
+
+---
+
+## Configuration
+
+Edit `appsettings.json` to customize:
+```json
+{
+  "Whisper": {
+    "ExecutablePath": "whisper/faster-whisper-xxl.exe",
+    "Model": "medium",
+    "Language": "",
+    "AdditionalArguments": ""
+  },
+  "Jobs": {
+    "MaxConcurrent": 1,
+    "CompletedRetentionMinutes": 10,
+    "OrphanedMaxAgeMinutes": 30
+  }
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `Model` | tiny, base, small, medium, large-v2 |
+| `Language` | Empty for auto-detect, or: en, de, fr, etc. |
+| `MaxConcurrent` | Number of parallel transcriptions |
 
 ---
 
@@ -234,7 +262,7 @@ curl http://localhost:5162/api/status/abc123
 ## TODO
 
 - [x] Run as Windows Service
-- [ ] Load Whisper parameters from config file
+- [x] Load Whisper parameters from config file
 - [ ] Support multiple concurrent transcriptions
 - [ ] Add language selection dropdown
 - [ ] Authentication for intranet deployment

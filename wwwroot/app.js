@@ -8,7 +8,6 @@ const resultDiv = document.getElementById('result');
 function showSelectedFile(file) {
   fileNameDiv.innerHTML = `Selected file: <strong>${file.name}</strong> (${formatBytes(file.size)})`;
   uploadBtn.disabled = false;
-  resultDiv.className = '';
 }
 
 function formatBytes(bytes) {
@@ -42,7 +41,7 @@ async function uploadFile() {
   resultDiv.style.display = 'block';
   resultDiv.innerHTML = `
     <span class="material-icons">hourglass_empty</span>
-    <string>Uploading...</uploading>
+    <strong>Uploading...</strong>
     <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
     <div id="progressText">0%</div>
   `;
@@ -65,7 +64,7 @@ async function uploadFile() {
     const jobId = uploadData.jobId;
     resultDiv.innerHTML = `
       <span class="material-icons">hourglass_empty</span>
-      <string>Processing...</uploading>
+      <strong>Processing...</strong>
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div id="progressText">Queued...</div>
     `;
@@ -96,10 +95,12 @@ async function pollForCompletion(jobId) {
     switch (data.status) {
       case 'queued':
       case 'processing':
-        progressFill.style.width = `${data.progress}%`;
+        progressFill.style.width = `${data.progress ?? 0}%`;
         progressText.textContent = data.status === 'queued'
           ? 'Queued...'
-          : `Processing: ${data.progress}%`;
+          : data.progress == null
+            ? 'Detecting Language...'
+            : `Processing: ${data.progress}%`;
         await new Promise((resolve) => setTimeout(resolve, 1000)); // Poll every second
         break;
       case 'complete':

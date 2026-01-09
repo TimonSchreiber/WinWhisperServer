@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.RegularExpressions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,17 +7,19 @@ var builder = WebApplication.CreateBuilder(args);
 // Run as Windows Service
 builder.Host.UseWindowsService();
 
+// Bind settings from appsettings.json
+var whisperSettings = builder.Configuration.GetSection("Whisper").Get<WhisperSettigns>() ?? new WhisperSettigns();
+var jobSettings = builder.Configuration.GetSection("Jobs").Get<JobSettings>() ?? new JobSettings();
+
 var app = builder.Build();
 
-SemaphoreSlim whisperSemaphore = new(1, 1);
+SemaphoreSlim whisperSemaphore = new(jobSettings.MaxConcurrent, jobSettings.MaxConcurrent);
 
 ConcurrentDictionary<string, TranscriptionJob> jobs = new();
 
-string uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "uploads");
+var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "uploads");
 
-const int CompletedJobRetentionMinutes = 1; // TODO: increase time when in development
-
-CleanUpOrphanedJobs();
+CleanUpOrphanedJobs(uploadsRoot, jobSettings.OrphanedMaxAgeMinutes);
 
 // Serve static files from wwwroot folder (for index.html, css, js, etc.)
 app.UseStaticFiles();
@@ -109,9 +112,22 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
         try
         {
             job.Status = "processing";
-            job.Progress = 0;
 
-            var exePath = Path.Combine(contentRootPath, "whisper", "faster-whisper-xxl.exe");
+            var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
+
+            var argsBuilder = new StringBuilder();
+            argsBuilder.Append($"\"{filePath}\" -pp -o source -f srt");
+            argsBuilder.Append($" -m {whisperSettings.Model}");
+
+            if (!string.IsNullOrEmpty(whisperSettings.Language))
+            {
+                argsBuilder.Append($" -l {whisperSettings.Language}");
+            }
+
+            if (!string.IsNullOrEmpty(whisperSettings.AdditionalArguments))
+            {
+                argsBuilder.Append($" {whisperSettings.AdditionalArguments}");
+            }
 
             Console.WriteLine($"[{job.Id}] Starting Whisper on: {job.FileName}");
 
@@ -120,7 +136,7 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
                 StartInfo =
                 {
                     FileName = exePath,
-                    Arguments = $"\"{filePath}\" -pp -o source -f srt -m medium",
+                    Arguments = argsBuilder.ToString(),
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -131,7 +147,7 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
 
             process.Start();
 
-            // Read sdtout in real time for progress updates
+            // Read stdout in real time for progress updates
             var outputtask = Task.Run(async () =>
             {
                 while (true)
@@ -194,7 +210,7 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
         // Clean up files after a delay (give time for download)
         _ = Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromMinutes(CompletedJobRetentionMinutes));
+            await Task.Delay(TimeSpan.FromMinutes(jobSettings.CompletedJobRetentionMinutes));
             try
             {
                 Directory.Delete(job.RequestDir, recursive: true);
@@ -206,11 +222,11 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
     }
 }
 
-void CleanUpOrphanedJobs()
+void CleanUpOrphanedJobs(string uploadsRoot, int orphanedMaxAgeMinutes)
 {
     if (Directory.Exists(uploadsRoot))
     {
-        var cutoff = DateTime.UtcNow.AddMinutes(-CompletedJobRetentionMinutes);
+        var cutoff = DateTime.UtcNow.AddMinutes(-orphanedMaxAgeMinutes);
         foreach (var dir in Directory.GetDirectories(uploadsRoot))
         {
             try
@@ -240,11 +256,26 @@ record TranscriptionJob
     public string Id { get; init; } = "";
     public string FileName { get; init; } = "";
     public string Status { get; set; } = "queued";
-    public int Progress { get; set; } = 0;
+    public int? Progress { get; set; } = null;
     public string? SrtContent { get; set; }
     public string? PlainText { get; set; }
     public string? Error { get; set; }
     public string RequestDir { get; set; } = "";
+}
+
+record WhisperSettigns
+{
+    public string ExecutablePath { get; set; } = "whisper/faster-whisper-xxl.exe";
+    public string Model { get; set; } = "medium";
+    public string Language { get; set; } = "";
+    public string AdditionalArguments { get; set; } = "";
+}
+
+record JobSettings
+{
+    public int MaxConcurrent { get; set; } = 1;
+    public int CompletedJobRetentionMinutes { get; set; } = 10;
+    public int OrphanedMaxAgeMinutes { get; set; } = 30;
 }
 
 partial class Program
