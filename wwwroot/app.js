@@ -19,8 +19,8 @@ function formatBytes(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
-function downloadFile(content, fileName) {
-  const blob = new Blob([content], { type: 'text/plain' });
+function downloadFile(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -38,31 +38,82 @@ async function uploadFile() {
   uploadBtn.disabled = true;
   uploadBtn.classList.add('loading');
 
+  resultDiv.className = 'processing';
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = `
+    <span class="material-icons">hourglass_empty</span>
+    <string>Uploading...</uploading>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="progressText">0%</div>
+  `;
 
   const formData = new FormData();
   formData.append('file', file);
 
   try {
-    const response = await fetch('/api/upload', {
+    // Upload and get job ID
+    const uploadResponse = await fetch('/api/upload', {
       method: 'POST',
       body: formData,
     });
 
-    const contentType = response.headers.get('content-type') || '';
-    let data;
-    if (contentType.includes('application/json')) {
-      data = await response.json();
-    } else {
-      // fallback: server returned HTML or plain text - show it as an error
-      const text = await response.text();
-      data = { error: 'Non.JSON response from server', detail: text, transcription: text };
+    const uploadData = await uploadResponse.json();
+    if (!uploadResponse.ok) {
+      throw new Error(uploadData.error || 'Upload failed');
     }
 
-    if (!response.ok) {
-      throw new Error(data.detail || data.error || 'Upload failed');
-    }
+    const jobId = uploadData.jobId;
+    resultDiv.innerHTML = `
+      <span class="material-icons">hourglass_empty</span>
+      <string>Processing...</uploading>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div id="progressText">Queued...</div>
+    `;
 
-    const fileName = file.name.substring(0, file.name.lastIndexOf('.'));
+    resultDiv.scrollIntoView({ behavior: 'smooth' });
+
+    // Poll for status
+    const result = await pollForCompletion(jobId);
+    showResult(result, file.name);
+
+  } catch (error) {
+    resultDiv.className = 'error';
+    resultDiv.innerHTML = `<span class="material-icons">error</span> Error: ${error.message}`;
+  } finally {
+    uploadBtn.disabled = false;
+    uploadBtn.classList.remove('loading');
+  }
+}
+
+async function pollForCompletion(jobId) {
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+
+  while (true) {
+    const response = await fetch(`/api/status/${jobId}`);
+    const data = await response.json();
+
+    switch (data.status) {
+      case 'queued':
+      case 'processing':
+        progressFill.style.width = `${data.progress}%`;
+        progressText.textContent = data.status === 'queued'
+          ? 'Queued...'
+          : `Processing: ${data.progress}%`;
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Poll every second
+        break;
+      case 'complete':
+        return data;
+      case 'error':
+        throw new Error(data.error ||'Processing failed');
+      default:
+        throw new Error(`Unknowd status: ${data.status}`);
+    }
+  }
+}
+
+function showResult(data, originalFileName) {
+    const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
 
     // Create download button
     resultDiv.className = 'success';
@@ -78,26 +129,17 @@ async function uploadFile() {
       </div>
       <div class="transcription-preview">
         <strong>Preview:</strong>
-        <pre>${escapeHtml(data.transcription)}</pre>
+        <pre>${escapeHtml(data.transcription || data.plaintext)}</pre>
       </div>
     `;
-    resultDiv.scrollIntoView({ behavior: 'smooth' });
 
     document.getElementById('srtDownloadBtn').addEventListener('click', () => {
-      downloadFile(data.transcription, `${fileName}.srt`);
+      downloadFile(data.transcription, `${fileName}.srt`, 'application/x-subrip');
     });
 
     document.getElementById('txtDownloadBtn').addEventListener('click', () => {
-      downloadFile(data.plainText, `${fileName}.txt`);
+      downloadFile(data.plainText, `${fileName}.txt`, 'text/plain');
     });
-
-  } catch (error) {
-    resultDiv.className = 'error';
-    resultDiv.textContent = `<span class="material-icons">error</span> Error: ${error.message}`;
-  } finally {
-    uploadBtn.disabled = false;
-    uploadBtn.classList.remove('loading');
-  }
 }
 
 function escapeHtml(text) {

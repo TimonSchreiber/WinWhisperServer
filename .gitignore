@@ -181,7 +181,7 @@ DocProject/Help/Html2
 DocProject/Help/html
 
 # Click-Once directory
-publish/
+# publish/
 
 # Publish Web Output
 *.[Pp]ublish.xml
@@ -423,4 +423,7 @@ obj/
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,dotnetcore,csharp
 
-/whisper
+!/whisper
+/whisper/*
+/uploads/*
+*.zip
