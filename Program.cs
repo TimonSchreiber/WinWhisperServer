@@ -3,6 +3,9 @@ using System.Text.RegularExpressions;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Run as Windows Service
+builder.Host.UseWindowsService();
+
 var app = builder.Build();
 
 SemaphoreSlim whisperSemaphore = new(1, 1);

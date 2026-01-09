@@ -83,6 +83,36 @@ Users on your network can then access the app at:
 
 ---
 
+## Running as Windows Service
+
+For production deployment, you can install the application as a Windows Service that starts automatically with Windows.
+
+### Install (Run Command Prompt as Administrator)
+```bash
+sc create WhisperService binPath="C:\WhisperApp\MyWhisperApp.exe --urls http://0.0.0.0:5162" start=auto
+sc start WhisperService
+```
+
+Replace `C:\WhisperApp\` with your actual installation path.
+
+### Manage the Service
+```bash
+sc stop WhisperService       # Stop the service
+sc start WhisperService      # Start the service
+sc delete WhisperService     # Uninstall completely
+```
+
+Or use the Services GUI: Press `Win+R`, type `services.msc`, find "WhisperService".
+
+### View Logs
+
+When running as a service, console output goes to the Windows Event Log:
+- Open Event Viewer (`eventvwr.msc`)
+- Navigate to: Windows Logs → Application
+- Filter by source: WhisperService
+
+---
+
 ## Folder Structure
 
 ```
@@ -114,13 +144,6 @@ For developers who want to modify the application.
 - Faster Whisper XXL in `/whisper` folder
 
 ### Run in Development Mode
-
-```bash
-dotnet watch run
-```
-
-Can cause troubles with the faster-whisper-xxl.exe \
-The use:
 
 ```bash
 dotnet run
@@ -210,7 +233,7 @@ curl http://localhost:5162/api/status/abc123
 
 ## TODO
 
-- [ ] Run as Windows Service
+- [x] Run as Windows Service
 - [ ] Load Whisper parameters from config file
 - [ ] Support multiple concurrent transcriptions
 - [ ] Add language selection dropdown
