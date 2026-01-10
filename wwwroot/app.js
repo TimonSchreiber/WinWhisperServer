@@ -100,13 +100,14 @@ async function pollForCompletion(jobId) {
 
     switch (data.status) {
       case 'queued':
+        progressText.textContent = `Queued... (${data.queuePosition} before you)`;
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Poll every second
+        break;
       case 'processing':
         progressFill.style.width = `${data.progress ?? 0}%`;
-        progressText.textContent = data.status === 'queued'
-          ? 'Queued...'
-          : data.progress == null
-            ? 'Detecting Language...'
-            : `Processing: ${data.progress}%`;
+        progressText.textContent = data.progress == null
+          ? 'Detecting Language...'
+          : `Processing: ${data.progress}%`;
         await new Promise((resolve) => setTimeout(resolve, 1000)); // Poll every second
         break;
       case 'complete':

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,18 +9,36 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();
 
 // Bind settings from appsettings.json
-var whisperSettings = builder.Configuration.GetSection("Whisper").Get<WhisperSettigns>() ?? new WhisperSettigns();
+var whisperSettings = builder.Configuration.GetSection("Whisper").Get<WhisperSettings>() ?? new WhisperSettings();
 var jobSettings = builder.Configuration.GetSection("Jobs").Get<JobSettings>() ?? new JobSettings();
 
 var app = builder.Build();
 
-SemaphoreSlim whisperSemaphore = new(jobSettings.MaxConcurrent, jobSettings.MaxConcurrent);
-
+// Job storage
 ConcurrentDictionary<string, TranscriptionJob> jobs = new();
+
+// FIFO queue using Channel
+var jobChannel = Channel.CreateUnbounded<string>();
+
+// Queue position tracking
+List<string> jobQueue = [];
+object queueLock = new();
 
 var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "uploads");
 
+// Clean up orphaned jobs from previous runs
 CleanUpOrphanedJobs(uploadsRoot, jobSettings.OrphanedMaxAgeMinutes);
+
+// Start background workers (one per MaxConcurrent)
+for (int i = 0; i < jobSettings.MaxConcurrent; i++)
+{
+    var workerId = i + 1;
+    _ = Task.Run(async () =>
+    {
+        Console.WriteLine($"[Worker {workerId}] Started");
+        await ProcessJobsFromChannel(workerId);
+    });
+}
 
 // Serve static files from wwwroot folder (for index.html, css, js, etc.)
 app.UseStaticFiles();
@@ -48,7 +67,7 @@ app.MapPost("/api/upload", async (HttpRequest request) =>
     var requestDir = Path.Combine(uploadsRoot, jobId);
     Directory.CreateDirectory(requestDir);
 
-    // Save the uplaoded file
+    // Save the uploaded file
     var savedFilePath = Path.Combine(requestDir, file.FileName);
     await using (var fs = new FileStream(savedFilePath, FileMode.Create))
     {
@@ -65,14 +84,26 @@ app.MapPost("/api/upload", async (HttpRequest request) =>
     };
     jobs[jobId] = job;
 
-    // start background processing
-    _ = Task.Run(async () =>
+    // Add to queue for position tracking
+    lock (queueLock)
     {
-        await ProcessJobAsync(job, app.Environment.ContentRootPath, savedFilePath);
-    });
+        jobQueue.Add(jobId);
+    }
+
+    // Queue for processing
+    await jobChannel.Writer.WriteAsync(jobId);
+
+    // Get initial queue position
+    int queuePosition;
+    lock(queueLock)
+    {
+        queuePosition = jobQueue.IndexOf(jobId);
+    }
+
+    Console.WriteLine($"[{jobId}] Queued at position {queuePosition}");
 
     // Return immediately with job ID
-    return Results.Ok(new { jobId, status = "queued" });
+    return Results.Ok(new { jobId, status = "queued", queuePosition  });
 })
 .DisableAntiforgery();
 
@@ -83,12 +114,19 @@ app.MapGet("/api/status/{jobId}", (string jobId) =>
         return Results.NotFound(new { error = "Job not found" });
     }
 
+    int queuePosition;
+    lock (queueLock)
+    {
+        queuePosition = jobQueue.IndexOf(jobId);
+    }
+
     return Results.Ok(new
     {
         jobId = job.Id,
         fileName = job.FileName,
         status = job.Status,
         progress = job.Progress,
+        queuePosition = queuePosition,
         transcription = job.SrtContent,
         plainText = job.PlainText,
         error = job.Error
@@ -98,6 +136,27 @@ app.MapGet("/api/status/{jobId}", (string jobId) =>
 app.Run();
 
 // =============================================================================
+// BACKGROUND WORKER
+// =============================================================================
+
+async Task ProcessJobsFromChannel(int workerId)
+{
+    await foreach (var jobId in jobChannel.Reader.ReadAllAsync())
+    {
+        if (!jobs.TryGetValue(jobId, out var job))
+        {
+            Console.WriteLine($"[Worker {workerId}] Job {jobId} not found, skipping");
+            continue;
+        }
+
+        Console.WriteLine($"[Worker {workerId}] Processing job {jobId}");
+
+        var filePath = Path.Combine(job.RequestDir, job.FileName);
+        await ProcessJobAsync(job, app.Environment.ContentRootPath, filePath);
+    }
+}
+
+// =============================================================================
 // PROCESSING LOGIC
 // =============================================================================
 
@@ -105,99 +164,88 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
 {
     try
     {
-        // Wait for semaphore (queued if another job is running)
-        job.Status = "queued";
-        await whisperSemaphore.WaitAsync();
+        job.Status = "processing";
 
-        try
+        var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
+
+        var argsBuilder = new StringBuilder();
+        argsBuilder.Append($"\"{filePath}\" -pp -o source -f srt");
+        argsBuilder.Append($" -m {whisperSettings.Model}");
+
+        if (!string.IsNullOrEmpty(whisperSettings.Language))
         {
-            job.Status = "processing";
-
-            var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
-
-            var argsBuilder = new StringBuilder();
-            argsBuilder.Append($"\"{filePath}\" -pp -o source -f srt");
-            argsBuilder.Append($" -m {whisperSettings.Model}");
-
-            if (!string.IsNullOrEmpty(whisperSettings.Language))
-            {
-                argsBuilder.Append($" -l {whisperSettings.Language}");
-            }
-
-            if (!string.IsNullOrEmpty(whisperSettings.AdditionalArguments))
-            {
-                argsBuilder.Append($" {whisperSettings.AdditionalArguments}");
-            }
-
-            Console.WriteLine($"[{job.Id}] Starting Whisper on: {job.FileName}");
-
-            var process = new System.Diagnostics.Process
-            {
-                StartInfo =
-                {
-                    FileName = exePath,
-                    Arguments = argsBuilder.ToString(),
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WorkingDirectory = contentRootPath,
-                }
-            };
-
-            process.Start();
-
-            // Read stdout in real time for progress updates
-            var outputtask = Task.Run(async () =>
-            {
-                while (true)
-                {
-                    var line = await process.StandardOutput.ReadLineAsync();
-                    if (line == null)
-                    {
-                        break;
-                    }
-                    // Parse progress of present
-                    var match = ProgressPercentageRegex().Match(line);
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out var pct))
-                    {
-                        job.Progress = pct;
-                    }
-                }
-            });
-
-            await outputtask;
-            await process.WaitForExitAsync();
-
-            Console.WriteLine($"[{job.Id}] Whisper exit code: {process.ExitCode}");
-
-            if (process.ExitCode != 0)
-            {
-                job.Status = "error";
-                job.Error = $"Whisper exited with code {process.ExitCode}";
-                return;
-            }
-
-            // Read SRT file
-            var srtPath = Path.Combine(job.RequestDir, Path.GetFileNameWithoutExtension(job.FileName) + ".srt");
-            if (!File.Exists(srtPath))
-            {
-                job.Status = "error";
-                job.Error = "SRT file not found after processing";
-                return;
-            }
-
-            job.SrtContent = await File.ReadAllTextAsync(srtPath);
-            job.PlainText = SrtToPlainText(job.SrtContent);
-            job.Progress = 100;
-            job.Status = "complete";
-
-            Console.WriteLine($"[{job.Id}] Transcription complete");
+            argsBuilder.Append($" -l {whisperSettings.Language}");
         }
-        finally
+
+        if (!string.IsNullOrEmpty(whisperSettings.AdditionalArguments))
         {
-            whisperSemaphore.Release();
+            argsBuilder.Append($" {whisperSettings.AdditionalArguments}");
         }
+
+        Console.WriteLine($"[{job.Id}] Starting Whisper on: {job.FileName}");
+
+        var process = new System.Diagnostics.Process
+        {
+            StartInfo =
+            {
+                FileName = exePath,
+                Arguments = argsBuilder.ToString(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = contentRootPath,
+            }
+        };
+
+        process.Start();
+
+        // Read stdout in real time for progress updates
+        var outputTask = Task.Run(async () =>
+        {
+            while (true)
+            {
+                var line = await process.StandardOutput.ReadLineAsync();
+                if (line == null)
+                {
+                    break;
+                }
+                // Parse progress if present
+                var match = ProgressPercentageRegex().Match(line);
+                if (match.Success && int.TryParse(match.Groups[1].Value, out var pct))
+                {
+                    job.Progress = pct;
+                }
+            }
+        });
+
+        await outputTask;
+        await process.WaitForExitAsync();
+
+        Console.WriteLine($"[{job.Id}] Whisper exit code: {process.ExitCode}");
+
+        if (process.ExitCode != 0)
+        {
+            job.Status = "error";
+            job.Error = $"Whisper exited with code {process.ExitCode}";
+            return;
+        }
+
+        // Read SRT file
+        var srtPath = Path.Combine(job.RequestDir, Path.GetFileNameWithoutExtension(job.FileName) + ".srt");
+        if (!File.Exists(srtPath))
+        {
+            job.Status = "error";
+            job.Error = "SRT file not found after processing";
+            return;
+        }
+
+        job.SrtContent = await File.ReadAllTextAsync(srtPath);
+        job.PlainText = SrtToPlainText(job.SrtContent);
+        job.Progress = 100;
+        job.Status = "complete";
+
+        Console.WriteLine($"[{job.Id}] Transcription complete");
     }
     catch (Exception ex)
     {
@@ -207,7 +255,13 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
     }
     finally
     {
-        // Clean up files after a delay (give time for download)
+        // Remove from queue tracking
+        lock (queueLock)
+        {
+            jobQueue.Remove(job.Id);
+        }
+
+        // Clean up files after a delay
         _ = Task.Run(async () =>
         {
             await Task.Delay(TimeSpan.FromMinutes(jobSettings.CompletedJobRetentionMinutes));
@@ -263,7 +317,7 @@ record TranscriptionJob
     public string RequestDir { get; set; } = "";
 }
 
-record WhisperSettigns
+record WhisperSettings
 {
     public string ExecutablePath { get; set; } = "whisper/faster-whisper-xxl.exe";
     public string Model { get; set; } = "medium";
