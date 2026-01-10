@@ -126,7 +126,8 @@ app.MapGet("/api/status/{jobId}", (string jobId) =>
         fileName = job.FileName,
         status = job.Status,
         progress = job.Progress,
-        queuePosition = queuePosition,
+        queuePosition,
+        duration = job.Duration,
         transcription = job.SrtContent,
         plainText = job.PlainText,
         error = job.Error
@@ -211,10 +212,17 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
                     break;
                 }
                 // Parse progress if present
-                var match = ProgressPercentageRegex().Match(line);
-                if (match.Success && int.TryParse(match.Groups[1].Value, out var pct))
+                var progressMatch = ProgressPercentageRegex().Match(line);
+                if (progressMatch.Success && int.TryParse(progressMatch.Groups[1].Value, out var pct))
                 {
                     job.Progress = pct;
+                }
+
+                // Parse duration if present
+                var durationMatch = TranscriptionDurationRegex().Match(line);
+                if (durationMatch.Success)
+                {
+                    job.Duration = durationMatch.Groups[1].Value;
                 }
             }
         });
@@ -311,6 +319,7 @@ record TranscriptionJob
     public string FileName { get; init; } = "";
     public string Status { get; set; } = "queued";
     public int? Progress { get; set; } = null;
+    public string? Duration { get; set; }
     public string? SrtContent { get; set; }
     public string? PlainText { get; set; }
     public string? Error { get; set; }
@@ -337,6 +346,9 @@ partial class Program
 
     [GeneratedRegex(@"^\s*(\d+)%")]
     private static partial Regex ProgressPercentageRegex();
+
+    [GeneratedRegex(@"Operation finished in:\s+(\d:\d{2}:\d{2}\.\d{3})")]
+    private static partial Regex TranscriptionDurationRegex();
 
     [GeneratedRegex(@"\r?\n?\d+\r?\n.+? --> .+?\r?\n", RegexOptions.Multiline)]
     private static partial Regex SrtTimeStampLineRegex();

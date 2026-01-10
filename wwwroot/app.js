@@ -123,10 +123,15 @@ async function pollForCompletion(jobId) {
 function showResult(data, originalFileName) {
     const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
 
+    const durationText = data.duration
+      ? `<p>Completed in: <strong>${data.duration}</strong></p>`
+      : '';
+
     // Create download button
     resultDiv.className = 'success';
     resultDiv.innerHTML = `
       <strong><span class="material-icons">check_circle</span> Transcription Complete!</strong>
+      ${durationText}
       <div class="transcription-actions">
         <button class="btn download-btn" id="srtDownloadBtn">
           <span class="material-icons">download</span> ${fileName}.srt
