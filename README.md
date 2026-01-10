@@ -1,6 +1,6 @@
-# MyWhisperApp
+# WinWhisperServer
 
-A web-based speech-to-text transcription service powered by [Faster Whisper XXL](https://github.com/Purfview/whisper-standalone-win). Upload audio files through a simple browser interface and receive transcriptions in SRT or plain text format.
+A Windows web server for speech-to-text transcription, powered by [Faster Whisper XXL](https://github.com/Purfview/whisper-standalone-win). Upload audio files through a simple browser interface and receive transcriptions in SRT or plain text format.
 
 ## Features
 
@@ -27,7 +27,7 @@ Extract it and note the location.
 
 ```
 publish/
-├── MyWhisperApp.exe
+├── WinWhisperServer.exe
 ├── wwwroot/
 │   ├── index.html
 │   ├── app.js
@@ -41,11 +41,11 @@ Copy the **entire contents** of the Faster Whisper XXL release into the `publish
 
 ### 3. Run the Application
 
-Double-click `MyWhisperApp.exe` or run from command line:
+Double-click `WinWhisperServer.exe` or run from command line:
 
 ```bash
 cd publish
-MyWhisperApp.exe
+WinWhisperServer.exe
 ```
 
 ### 4. Open in Browser
@@ -61,7 +61,7 @@ To make the application accessible to other computers on your network:
 ### Option A: Command Line
 
 ```bash
-MyWhisperApp.exe --urls "http://0.0.0.0:5162"
+WinWhisperServer.exe --urls "http://0.0.0.0:5162"
 ```
 
 ### Option B: Environment Variable
@@ -70,7 +70,7 @@ Set `ASPNETCORE_URLS` before running:
 
 ```bash
 set ASPNETCORE_URLS=http://0.0.0.0:5162
-MyWhisperApp.exe
+WinWhisperServer.exe
 ```
 
 ### Firewall
@@ -89,7 +89,7 @@ For production deployment, you can install the application as a Windows Service 
 
 ### Install (Run Command Prompt as Administrator)
 ```bash
-sc create WhisperService binPath="C:\WhisperApp\MyWhisperApp.exe --urls http://0.0.0.0:5162" start=auto
+sc create WhisperService binPath="C:\WhisperApp\WinWhisperServer.exe --urls http://0.0.0.0:5162" start=auto
 sc start WhisperService
 ```
 
@@ -116,9 +116,9 @@ When running as a service, console output goes to the Windows Event Log:
 ## Folder Structure
 
 ```
-MyWhisperApp/
+WinWhisperServer/
 ├── publish/                    # Ready-to-run application
-│   ├── MyWhisperApp.exe
+│   ├── WinWhisperServer.exe
 │   ├── wwwroot/
 │   └── whisper/                # Add Faster Whisper here
 ├── wwwroot/                    # Frontend source files
@@ -129,7 +129,7 @@ MyWhisperApp/
 ├── whisper/                    # Development: Faster Whisper location
 ├── Program.cs                  # Backend source code
 ├── appsettings.json            # Config file
-├── MyWhisperApp.csproj
+├── WinWhisperServer.csproj
 └── README.md
 ```
 
@@ -160,6 +160,16 @@ Edit `appsettings.json` to customize:
 | `Language` | Empty for auto-detect, or: en, de, fr, etc. |
 | `MaxConcurrent` | Number of parallel transcriptions |
 
+### Whisper Model Options
+
+| Model | Speed | Accuracy | VRAM |
+|-------|-------|----------|------|
+| tiny | Fastest | Low | ~1 GB |
+| base | Fast | Medium | ~1 GB |
+| small | Medium | Good | ~2 GB |
+| medium | Slow | High | ~5 GB |
+| large-v2 | Slowest | Highest | ~10 GB |
+
 ---
 
 ## Development Setup
@@ -189,28 +199,6 @@ This creates a standalone `.exe` that includes the .NET runtime. Users don't nee
 
 ---
 
-## Configuration
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Port | 5162 | HTTP port for the web server |
-| Whisper Model | medium | Accuracy vs speed trade-off |
-| Output Format | srt | Subtitle format |
-
-### Whisper Model Options
-
-Edit in `Program.cs` (the `-m` argument):
-
-| Model | Speed | Accuracy | VRAM |
-|-------|-------|----------|------|
-| tiny | Fastest | Low | ~1 GB |
-| base | Fast | Medium | ~1 GB |
-| small | Medium | Good | ~2 GB |
-| medium | Slow | High | ~5 GB |
-| large-v2 | Slowest | Highest | ~10 GB |
-
----
-
 ## Troubleshooting
 
 ### "Das System kann die angegebene Datei nicht finden"
@@ -225,7 +213,7 @@ On first run, Windows may block the executable. Run faster-whisper-xxl manually 
 ### Port already in use
 Another application is using port 5162. Either stop that application or use a different port:
 ```bash
-MyWhisperApp.exe --urls "http://0.0.0.0:8080"
+WinWhisperServer.exe --urls "http://0.0.0.0:8080"
 ```
 
 ---
@@ -263,7 +251,12 @@ curl http://localhost:5162/api/status/abc123
 
 - [x] Run as Windows Service
 - [x] Load Whisper parameters from config file
-- [ ] Support multiple concurrent transcriptions
+- [x] Support multiple concurrent transcriptions
+- [x] Disable file select button during transcription
+- [ ] Show Queue progress -> how many in front of you
+- [ ] Add total transcription time to output
+- [ ] Maybe: Keep old results accessible
+
 - [ ] Add language selection dropdown
 - [ ] Authentication for intranet deployment
 
