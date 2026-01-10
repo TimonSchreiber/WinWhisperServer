@@ -14,19 +14,19 @@
 </head>
 
 <body>
-  <div class="upload-container">
+  <div class="container">
     <h1>Faster Whisper XXL</h1>
     <p>Upload an audio file to transcribe it to text.</p>
 
-    <div class="upload-area" id="dropZone">
+    <div class="file-select-area" id="fileSelectArea">
       <p>Drag & drop an audio file here, or click to select one.</p>
       <input type="file" name="fileInput" id="fileInput" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg">
-      <button class="btn" id="selectBtn">Select Audio File</button>
+      <button class="btn" id="browseBtn">Select Audio File</button>
     </div>
 
     <div id="fileName"></div>
 
-    <button class="btn" id="uploadBtn" disabled>
+    <button class="btn" id="transcribeBtn" disabled>
       Upload & Transcribe
       <span class="spinner"></span>
     </button>

@@ -1,13 +1,13 @@
 const fileInput = document.getElementById('fileInput');
-const dropZone = document.getElementById('dropZone');
-const uploadBtn = document.getElementById('uploadBtn');
-const selectBtn = document.getElementById('selectBtn');
+const fileSelectArea = document.getElementById('fileSelectArea');
+const transcribeBtn = document.getElementById('transcribeBtn');
+const browseBtn = document.getElementById('browseBtn');
 const fileNameDiv = document.getElementById('fileName');
 const resultDiv = document.getElementById('result');
 
 function showSelectedFile(file) {
   fileNameDiv.innerHTML = `Selected file: <strong>${file.name}</strong> (${formatBytes(file.size)})`;
-  uploadBtn.disabled = false;
+  transcribeBtn.disabled = false;
 }
 
 function formatBytes(bytes) {
@@ -34,8 +34,11 @@ async function uploadFile() {
   const file = fileInput.files[0];
   if (!file) return;
 
-  uploadBtn.disabled = true;
-  uploadBtn.classList.add('loading');
+  transcribeBtn.disabled = true;
+  browseBtn.disabled = true;
+  fileInput.disabled = true;
+  fileSelectArea.classList.add('disabled');
+  transcribeBtn.classList.add('loading');
 
   resultDiv.className = 'processing';
   resultDiv.style.display = 'block';
@@ -79,8 +82,11 @@ async function uploadFile() {
     resultDiv.className = 'error';
     resultDiv.innerHTML = `<span class="material-icons">error</span> Error: ${error.message}`;
   } finally {
-    uploadBtn.disabled = false;
-    uploadBtn.classList.remove('loading');
+    transcribeBtn.disabled = false;
+    browseBtn.disabled = false;
+    fileInput.disabled = false;
+    fileSelectArea.classList.remove('disabled');
+    transcribeBtn.classList.remove('loading');
   }
 }
 
@@ -150,8 +156,8 @@ function escapeHtml(text) {
 }
 
 // File selection
-selectBtn.addEventListener('click',  () => fileInput.click());
-uploadBtn.addEventListener('click', uploadFile);
+browseBtn.addEventListener('click',  () => fileInput.click());
+transcribeBtn.addEventListener('click', uploadFile);
 
 fileInput.addEventListener('change', (event) => {
   if (event.target.files.length > 0) {
@@ -160,18 +166,20 @@ fileInput.addEventListener('change', (event) => {
 });
 
 // Drag and drop
-dropZone.addEventListener('dragover', (event) => {
+fileSelectArea.addEventListener('dragover', (event) => {
   event.preventDefault();
-  dropZone.classList.add('dragover');
+  if (fileSelectArea.classList.contains('disabled')) return;
+  fileSelectArea.classList.add('dragover');
 });
 
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('dragover');
+fileSelectArea.addEventListener('dragleave', () => {
+  fileSelectArea.classList.remove('dragover');
 });
 
-dropZone.addEventListener('drop', (event) => {
+fileSelectArea.addEventListener('drop', (event) => {
   event.preventDefault();
-  dropZone.classList.remove('dragover');
+  fileSelectArea.classList.remove('dragover');
+  if (fileSelectArea.classList.contains('disabled')) return;
   if (event.dataTransfer.files.length > 0) {
     fileInput.files = event.dataTransfer.files;
     showSelectedFile(event.dataTransfer.files[0]);
