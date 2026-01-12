@@ -253,12 +253,14 @@ curl http://localhost:5162/api/status/abc123
 - [x] Load Whisper parameters from config file
 - [x] Support multiple concurrent transcriptions
 - [x] Disable file select button during transcription
-- [ ] Show Queue progress -> how many in front of you
-- [ ] Add total transcription time to output
-- [ ] Maybe: Keep old results accessible
+- [x] Show Queue progress -> how many in front of you
+- [x] Add total transcription time to output
 
+### Maybe:
+- [ ] Keep previous transcription result available
 - [ ] Add language selection dropdown
-- [ ] Authentication for intranet deployment
+- [ ] User managemant
+- [ ] Keep transcriptions for each user
 
 ---
 
