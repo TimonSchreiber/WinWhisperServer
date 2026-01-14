@@ -11,6 +11,21 @@ builder.Host.UseWindowsService();
 // Bind settings from appsettings.json
 var whisperSettings = builder.Configuration.GetSection("Whisper").Get<WhisperSettings>() ?? new WhisperSettings();
 var jobSettings = builder.Configuration.GetSection("Jobs").Get<JobSettings>() ?? new JobSettings();
+var uploadSettings = builder.Configuration.GetSection("Upload").Get<UploadSettings>() ?? new UploadSettings();
+
+// Translate User specified upload size from MB to Bytes. Windows effectively uses MiB anyway. Interprets bigger values like 1000 MB as 1 GiB
+var maxBytes = uploadSettings.MaxFileSizeMB * (int)Math.Pow(1_024, 2 + Math.Floor(Math.Log(uploadSettings.MaxFileSizeMB, 1_000)));
+
+// Set upload size limit (default is 30MiB)
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = maxBytes;
+});
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = maxBytes;
+});
 
 var app = builder.Build();
 
@@ -339,6 +354,11 @@ record JobSettings
     public int MaxConcurrent { get; set; } = 1;
     public int CompletedJobRetentionMinutes { get; set; } = 10;
     public int OrphanedMaxAgeMinutes { get; set; } = 30;
+}
+
+record UploadSettings
+{
+    public int MaxFileSizeMB { get; set; } = 30;
 }
 
 partial class Program
