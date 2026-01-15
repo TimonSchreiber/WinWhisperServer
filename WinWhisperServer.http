@@ -1,6 +1,9 @@
 @host = http://localhost:5162
 
-### Test upload
+### Get settings
+GET {{host}}/api/settings
+
+### Upload file
 POST {{host}}/api/upload
 Content-Type: multipart/form-data; boundary=boundary
 
