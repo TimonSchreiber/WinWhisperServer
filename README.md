@@ -249,18 +249,7 @@ curl http://localhost:5162/api/status/abc123
 
 ## TODO
 
-- [x] Run as Windows Service
-- [x] Load Whisper parameters from config file
-- [x] Support multiple concurrent transcriptions
-- [x] Disable file select button during transcription
-- [x] Show Queue progress -> how many in front of you
-- [x] Add total transcription time to output
-
-### Maybe:
-- [ ] Keep previous transcription result available
-- [ ] Add language selection dropdown
-- [ ] User managemant
-- [ ] Keep transcriptions for each user
+- [ ] Improve error feedback for frontend user
 
 ---
 

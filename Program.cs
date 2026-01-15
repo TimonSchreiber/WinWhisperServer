@@ -27,6 +27,12 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = maxBytes;
 });
 
+// Apply default if no formats configured
+if (whisperSettings.OutputFormats.Length == 0)
+{
+    whisperSettings.OutputFormats = ["json", "srt"];
+}
+
 var app = builder.Build();
 
 // Job storage
@@ -143,9 +149,17 @@ app.MapGet("/api/status/{jobId}", (string jobId) =>
         progress = job.Progress,
         queuePosition,
         duration = job.Duration,
-        transcription = job.SrtContent,
-        plainText = job.PlainText,
+        outputs = job.Outputs,
         error = job.Error
+    });
+});
+
+app.MapGet("/api/settings", () =>
+{
+    return Results.Ok(new
+    {
+        maxFileSizeMB = uploadSettings.MaxFileSizeMB,
+        outputFormats = whisperSettings.OutputFormats
     });
 });
 
@@ -185,7 +199,8 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
         var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
 
         var argsBuilder = new StringBuilder();
-        argsBuilder.Append($"\"{filePath}\" -pp -o source -f srt");
+        argsBuilder.Append($"\"{filePath}\" -pp -o source");
+        argsBuilder.Append($" -f {string.Join(" ", whisperSettings.OutputFormats)}");
         argsBuilder.Append($" -m {whisperSettings.Model}");
 
         if (!string.IsNullOrEmpty(whisperSettings.Language))
@@ -254,17 +269,26 @@ async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string 
             return;
         }
 
-        // Read SRT file
-        var srtPath = Path.Combine(job.RequestDir, Path.GetFileNameWithoutExtension(job.FileName) + ".srt");
-        if (!File.Exists(srtPath))
+        // Read all output files
+        job.Outputs = [];
+        var baseFileName = Path.GetFileNameWithoutExtension(job.FileName);
+
+        foreach (var format in whisperSettings.OutputFormats)
+        {
+            var outputPath = Path.Combine(job.RequestDir, $"{baseFileName}.{format}");
+            if (File.Exists(outputPath))
+            {
+                job.Outputs[format] = await File.ReadAllTextAsync(outputPath);
+            }
+        }
+
+        if (job.Outputs.Count == 0)
         {
             job.Status = "error";
-            job.Error = "SRT file not found after processing";
+            job.Error = "No output files not found after processing";
             return;
         }
 
-        job.SrtContent = await File.ReadAllTextAsync(srtPath);
-        job.PlainText = SrtToPlainText(job.SrtContent);
         job.Progress = 100;
         job.Status = "complete";
 
@@ -323,11 +347,6 @@ void CleanUpOrphanedJobs(string uploadsRoot, int orphanedMaxAgeMinutes)
     }
 }
 
-static string SrtToPlainText(string str)
-{
-    return SrtTimeStampLineRegex().Replace(str, "");
-}
-
 record TranscriptionJob
 {
     public string Id { get; init; } = "";
@@ -335,8 +354,7 @@ record TranscriptionJob
     public string Status { get; set; } = "queued";
     public int? Progress { get; set; } = null;
     public string? Duration { get; set; }
-    public string? SrtContent { get; set; }
-    public string? PlainText { get; set; }
+    public Dictionary<string, string>? Outputs { get; set; }
     public string? Error { get; set; }
     public string RequestDir { get; set; } = "";
 }
@@ -347,6 +365,8 @@ record WhisperSettings
     public string Model { get; set; } = "medium";
     public string Language { get; set; } = "";
     public string AdditionalArguments { get; set; } = "";
+
+    public string[] OutputFormats { get; set; } = [];
 }
 
 record JobSettings
@@ -369,7 +389,4 @@ partial class Program
 
     [GeneratedRegex(@"Operation finished in:\s+(\d:\d{2}:\d{2}\.\d{3})")]
     private static partial Regex TranscriptionDurationRegex();
-
-    [GeneratedRegex(@"\r?\n?\d+\r?\n.+? --> .+?\r?\n", RegexOptions.Multiline)]
-    private static partial Regex SrtTimeStampLineRegex();
 }
