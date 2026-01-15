@@ -1,3 +1,21 @@
+// Global settings
+let appSettings = {
+  maxFileSizeMB: 30,
+  outputFormats: ['json', 'srt'],
+};
+
+// Load settings from backend
+(async function loadSettings() {
+  try {
+    const response = await fetch('/api/settings');
+    if (response.ok) {
+      appSettings = await response.json();
+    }
+  } catch (error) {
+    console.warn('Could not load settings, using default values:', error);
+  }
+})();
+
 const fileInput = document.getElementById('fileInput');
 const fileSelectArea = document.getElementById('fileSelectArea');
 const transcribeBtn = document.getElementById('transcribeBtn');
@@ -6,7 +24,28 @@ const fileNameDiv = document.getElementById('fileName');
 const resultDiv = document.getElementById('result');
 
 function showSelectedFile(file) {
-  fileNameDiv.innerHTML = `Selected file: <strong>${file.name}</strong> (${formatBytes(file.size)})`;
+  const sizeText = formatBytes(file.size);
+  const fileSizeMB = file.size / (1024 * 1024);
+  const limitMB = appSettings.maxFileSizeMB;
+
+  // Warn if file is within 10% of limit
+  const warningThreshold = limitMB * 0.9;
+  const showWarning = fileSizeMB > warningThreshold;
+
+  let warningHtml = showWarning
+    ? `
+      <div class="file-warning">
+        <span class="material-icons">warning</span>
+        File might exceed upload limit of ${limitMB} MB
+      </div>
+    `
+    : '';
+
+  fileNameDiv.innerHTML = `
+    Selected file: <strong>${file.name}</strong> (${sizeText})
+    ${warningHtml}
+  `;
+
   transcribeBtn.disabled = false;
 }
 
@@ -77,7 +116,6 @@ async function uploadFile() {
     // Poll for status
     const result = await pollForCompletion(jobId);
     showResult(result, file.name);
-
   } catch (error) {
     resultDiv.className = 'error';
     resultDiv.innerHTML = `<span class="material-icons">error</span> Error: ${error.message}`;
@@ -121,38 +159,61 @@ async function pollForCompletion(jobId) {
 }
 
 function showResult(data, originalFileName) {
-    const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+  const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+  const outputs = data.outputs || {};
+  const formats = Object.keys(outputs);
 
-    const durationText = data.duration
-      ? `<p>Completed in: <strong>${data.duration}</strong></p>`
-      : '';
+  if (formats.length === 0) {
+      resultDiv.className = 'error';
+      resultDiv.innerHTML = `<span class="material-icons">error</span> No output files received`;
+      return;
+  }
 
-    // Create download button
-    resultDiv.className = 'success';
-    resultDiv.innerHTML = `
-      <strong><span class="material-icons">check_circle</span> Transcription Complete!</strong>
-      ${durationText}
-      <div class="transcription-actions">
-        <button class="btn download-btn" id="srtDownloadBtn">
-          <span class="material-icons">download</span> ${fileName}.srt
-        </button>
-        <button class="btn download-btn" id="txtDownloadBtn">
-          <span class="material-icons">download</span> ${fileName}.txt
-        </button>
-      </div>
-      <div class="transcription-preview">
-        <strong>Preview:</strong>
-        <pre>${escapeHtml(data.transcription || data.plaintext)}</pre>
-      </div>
-    `;
+  const durationText = data.duration
+    ? `<p>Completed in: <strong>${data.duration}</strong></p>`
+    : '';
 
-    document.getElementById('srtDownloadBtn').addEventListener('click', () => {
-      downloadFile(data.transcription, `${fileName}.srt`, 'application/x-subrip');
+  // Create download buttons for each format
+  const downloadButtons = formats.map(format => `
+    <button class="btn download-btn" data-format="${format}" data-filename="${fileName}">
+        <span class="material-icons">download</span> ${fileName}.${format}
+    </button>
+  `).join('');
+
+  // Preview: use order from settings, fallback to first available
+  const previewFormat = appSettings.outputFormats.find((f) => formats.includes(f)) || formats[0];
+  const previewContent = data.outputs[previewFormat];
+
+  resultDiv.className = 'success';
+  resultDiv.innerHTML = `
+    <strong><span class="material-icons">check_circle</span> Transcription Complete!</strong>
+    ${durationText}
+    <div class="transcription-actions">
+      ${downloadButtons}
+    </div>
+    <div class="transcription-preview">
+      <strong>Preview (${previewFormat}):</strong>
+      <pre>${escapeHtml(previewContent)}</pre>
+    </div>
+  `;
+
+  // Attach download handlers dynamically
+  document.querySelectorAll('.download-btn[data-format]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const format = btn.dataset.format;
+      const name = btn.dataset.filename;
+      const mimeTypes = {
+        'json': 'application/json',
+        'lrc' : 'text/plain',
+        'txt' : 'text/plain',
+        'text': 'text/plain',
+        'vtt' : 'text/vtt',
+        'srt' : 'application/x-subrip',
+        'tsv' : 'text/tab-separated-values',
+      };
+      downloadFile(data.outputs[format], `${name}.${format}`, mimeTypes[format] || 'text/plain');
     });
-
-    document.getElementById('txtDownloadBtn').addEventListener('click', () => {
-      downloadFile(data.plainText, `${fileName}.txt`, 'text/plain');
-    });
+  });
 }
 
 function escapeHtml(text) {
