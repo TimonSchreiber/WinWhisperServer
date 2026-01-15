@@ -249,8 +249,6 @@ curl http://localhost:5162/api/status/abc123
 
 ## TODO
 
-- [ ] Improve error feedback for frontend user
-
 ---
 
 ## License

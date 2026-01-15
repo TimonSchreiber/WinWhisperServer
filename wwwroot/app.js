@@ -73,16 +73,7 @@ async function uploadFile() {
   const file = fileInput.files[0];
   if (!file) return;
 
-  // Client-side size check
   const fileSizeMB = file.size / (1024 * 1024);
-  if (fileSizeMB > appSettings.maxFileSizeMB) {
-    showError(
-      'File Too Large',
-      `Maximum allowed size is ${appSettings.maxFileSizeMB} MB. Your file is ${fileSizeMB.toFixed(1)} MB.`,
-      'Try compressing the audio or splitting it into smaller parts.'
-    );
-    return;
-  }
 
   transcribeBtn.disabled = true;
   browseBtn.disabled = true;
@@ -130,7 +121,7 @@ async function uploadFile() {
     const result = await pollForCompletion(jobId);
     showResult(result, file.name);
   } catch (error) {
-    if (error instanceof TypeError && file.size > appSettings.maxFileSizeMB * 1024 * 1024) {
+    if (error instanceof TypeError && fileSizeMB > appSettings.maxFileSizeMB) {
       showError(
         'File Too Large',
         `Maximum allowed size is ${appSettings.maxFileSizeMB} MB. Your file is ${fileSizeMB.toFixed(1)} MB.`,
