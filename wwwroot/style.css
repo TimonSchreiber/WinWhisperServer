@@ -203,3 +203,23 @@ input[type="file"] {
   vertical-align: bottom;
   font-size: 18px !important;
 }
+
+.error-hint {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-hint .material-icons {
+  color: #856404;
+  font-size: 18px;
+}
+
+#result.error p {
+  margin: 8px 0 0 0;
+}

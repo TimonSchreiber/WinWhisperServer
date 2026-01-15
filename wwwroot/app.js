@@ -73,6 +73,17 @@ async function uploadFile() {
   const file = fileInput.files[0];
   if (!file) return;
 
+  // Client-side size check
+  const fileSizeMB = file.size / (1024 * 1024);
+  if (fileSizeMB > appSettings.maxFileSizeMB) {
+    showError(
+      'File Too Large',
+      `Maximum allowed size is ${appSettings.maxFileSizeMB} MB. Your file is ${fileSizeMB.toFixed(1)} MB.`,
+      'Try compressing the audio or splitting it into smaller parts.'
+    );
+    return;
+  }
+
   transcribeBtn.disabled = true;
   browseBtn.disabled = true;
   fileInput.disabled = true;
@@ -80,7 +91,6 @@ async function uploadFile() {
   transcribeBtn.classList.add('loading');
 
   resultDiv.className = 'processing';
-  resultDiv.style.display = 'block';
   resultDiv.innerHTML = `
     <span class="material-icons">hourglass_empty</span>
     <strong>Uploading...</strong>
@@ -98,12 +108,15 @@ async function uploadFile() {
       body: formData,
     });
 
-    const uploadData = await uploadResponse.json();
+    // Handle HTTP errors
     if (!uploadResponse.ok) {
-      throw new Error(uploadData.error || 'Upload failed');
+      await handleHttpError(uploadResponse, fileSizeMB);
+      return;
     }
 
+    const uploadData = await uploadResponse.json();
     const jobId = uploadData.jobId;
+
     resultDiv.innerHTML = `
       <span class="material-icons">hourglass_empty</span>
       <strong>Processing...</strong>
@@ -117,8 +130,15 @@ async function uploadFile() {
     const result = await pollForCompletion(jobId);
     showResult(result, file.name);
   } catch (error) {
-    resultDiv.className = 'error';
-    resultDiv.innerHTML = `<span class="material-icons">error</span> Error: ${error.message}`;
+    if (error instanceof TypeError && file.size > appSettings.maxFileSizeMB * 1024 * 1024) {
+      showError(
+        'File Too Large',
+        `Maximum allowed size is ${appSettings.maxFileSizeMB} MB. Your file is ${fileSizeMB.toFixed(1)} MB.`,
+        'Try compressing the audio or splitting it into smaller parts.'
+      );
+      return;
+    }
+    handleNetworkError(error);
   } finally {
     transcribeBtn.disabled = false;
     browseBtn.disabled = false;
@@ -252,3 +272,101 @@ fileSelectArea.addEventListener('drop', (event) => {
     showSelectedFile(event.dataTransfer.files[0]);
   }
 });
+
+// Error handler functions
+function showError(title, message, hint) {
+  resultDiv.className = 'error';
+  resultDiv.innerHTML = `
+    <span class="material-icons">error</span>
+    <strong>${title}</strong>
+    <p>${message}</p>
+    <p class="error-hint"><span class="material-icons">lightbulb</span> ${hint}</p>
+  `;
+}
+
+async function handleHttpError(response, fileSizeMB) {
+  const status = response.status;
+
+  // Try to get error message form respinse body
+  let serverMessage = '';
+  try {
+    const data = await response.json();
+    serverMessage = data.error || data.detail || '';
+  } catch (error) {
+    // Response wasn't JSON
+  }
+
+  switch (status) {
+    case 400:
+      showError(
+        'Invalid Request',
+        serverMessage || 'The server could not process your request.',
+        'Make sure you selected a valid audio file.'
+      );
+      break;
+
+    case 413:
+      showError(
+        'File Too Large',
+        `The file (${fileSizeMB.toFixed(1)} MB) exceeds the server limit of ${appSettings.maxFileSizeMB} MB.`,
+        'Try compressing the audio or splitting it into smaller parts.'
+      );
+      break;
+
+    case 500:
+      showError(
+        'Server Error',
+        serverMessage || 'Something went wrong on the server.',
+        'Please try again. If the problem persists, contact your administrator.'
+      );
+      break;
+
+    case 502:
+    case 503:
+    case 504:
+      showError(
+        'Server Unavailable',
+        'The server is temporarily unavailable.',
+        'Please wait a moment and try again.'
+      );
+      break;
+
+    default:
+      showError(
+        `Error (${status})`,
+        serverMessage || 'An unexpected error occurred.',
+        'Please try again or contact your administrator.'
+      );
+  }
+}
+
+function handleNetworkError(error) {
+  console.error('Network error:', error);
+
+  // Check for specifix error types
+  if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+    showError(
+      'Connection Failed',
+      'Could not connect to the server.',
+      'Check your network connection or verify the server is running.'
+    );
+  } else if (error instanceof AbortError) {
+    showError(
+      'Upload Cancelled',
+      'The upload was cancelled.',
+      'Please try again.'
+    );
+  } else if (error.message.includes('timeout')) {
+    showError(
+      'Connection Timeout',
+      'The server took too long to respond.',
+      'The server might be busy. Please try again in a moment.'
+    );
+  } else {
+    showError(
+      'Unexpected Error',
+      error.message || 'Something went wrong.',
+      'Please try again. If the problem persists, contact your administrator.'
+    );
+  }
+}
