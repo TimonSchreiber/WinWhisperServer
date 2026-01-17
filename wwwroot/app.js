@@ -341,7 +341,7 @@ function handleNetworkError(error) {
       'Could not connect to the server.',
       'Check your network connection or verify the server is running.'
     );
-  } else if (error instanceof AbortError) {
+  } else if (error.name === 'AbortError') {
     showError(
       'Upload Cancelled',
       'The upload was cancelled.',
@@ -352,6 +352,12 @@ function handleNetworkError(error) {
       'Connection Timeout',
       'The server took too long to respond.',
       'The server might be busy. Please try again in a moment.'
+    );
+  } else if (error.message.includes('process')) {
+    showError(
+      'Processing Failed',
+      'The server failed to process the file.',
+      'Please try again. If the problem persists, contact your administrator.'
     );
   } else {
     showError(
