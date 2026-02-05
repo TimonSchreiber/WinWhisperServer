@@ -108,7 +108,7 @@ Or use the Services GUI: Press `Win+R`, type `services.msc`, find "WhisperServic
 
 When running as a service, console output goes to the Windows Event Log:
 - Open Event Viewer (`eventvwr.msc`)
-- Navigate to: Windows Logs → Application
+- Navigate to: Windows Logs -> Application
 - Filter by source: WhisperService
 
 ---
@@ -172,6 +172,41 @@ Edit `appsettings.json` to customize:
 
 ---
 
+## Logging
+
+Configure logging in `appsettings.json`:
+```json
+{
+  "Serilog": {
+    "WriteTo": [
+      {
+        "Name": "File",
+        "Args": {
+          "path": "logs/winwhisperserver-.log",
+          "restrictedToMinimumLevel": "Information"
+        }
+      },
+      {
+        "Name": "EventLog",
+        "Args": {
+          "source": "WinWhisperServer",
+          "restrictedToMinimumLevel": "Warning"
+        }
+      }
+    ]
+  }
+}
+```
+
+| Sink | Location | Default Level |
+|------|----------|---------------|
+| File | `logs/` folder | Information |
+| EventLog | Windows Event Viewer -> Application | Warning |
+
+To view Event Log: `Win+R` -> `eventvwr.msc` -> Windows Logs -> Application -> Filter by "WinWhisperServer"
+
+---
+
 ## Development Setup
 
 For developers who want to modify the application.
@@ -208,7 +243,7 @@ The `whisper/faster-whisper-xxl.exe` is missing. Make sure you copied Faster Whi
 Whisper downloads the model on first use. This can take a few minutes depending on model size and internet speed.
 
 ### Windows SmartScreen warning
-On first run, Windows may block the executable. Run faster-whisper-xxl manually and click "More info" → "Run anyway".
+On first run, Windows may block the executable. Run faster-whisper-xxl manually and click "More info" -> "Run anyway".
 
 ### Port already in use
 Another application is using port 5162. Either stop that application or use a different port:
