@@ -178,6 +178,10 @@ Configure logging in `appsettings.json`:
 ```json
 {
   "Serilog": {
+    "Using": [
+      "Serilog.Sinks.File",
+      "Serilog.Sinks.EventLog"
+    ],
     "WriteTo": [
       {
         "Name": "File",
