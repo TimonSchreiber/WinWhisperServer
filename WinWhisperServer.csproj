@@ -13,6 +13,9 @@
   <ItemGroup>
     <Content Remove="publish\**" />
     <None Remove="publish\**" />
+
+    <Content Remove="whisper\**" />
+    <None Remove="whisper\**" />
   </ItemGroup>
 
   <ItemGroup>

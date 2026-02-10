@@ -430,3 +430,7 @@ obj/
 /uploads/*
 
 *.zip
+
+publish-test/
+releases/
+temp-release/

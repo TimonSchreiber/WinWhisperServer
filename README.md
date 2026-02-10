@@ -221,7 +221,6 @@ For developers who want to modify the application.
 - Faster Whisper XXL in `/whisper` folder
 
 ### Run in Development Mode
-
 ```bash
 dotnet run
 ```
@@ -229,12 +228,34 @@ dotnet run
 Access at: http://localhost:5162
 
 ### Build Self-Contained Executable
-
 ```bash
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
 ```
 
 This creates a standalone `.exe` that includes the .NET runtime. Users don't need .NET installed.
+
+### Release Script
+
+The `scripts/publish-release.ps1` script automates testing and publishing:
+```powershell
+# First time only: allow local scripts
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Create release with smoke tests
+./scripts/publish-release.ps1 -Version "1.8.0"
+
+# Create release with ZIP for GitHub
+./scripts/publish-release.ps1 -Version "1.8.0" -CreateZip
+
+# Skip tests (not recommended)
+./scripts/publish-release.ps1 -Version "1.8.0" -SkipTests
+```
+
+The script:
+- Runs smoke tests (normal startup + Windows Service simulation)
+- Publishes a clean build
+- Creates an empty `whisper/` placeholder
+- Optionally creates a release ZIP
 
 ---
 
