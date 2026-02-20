@@ -73,7 +73,7 @@ try
         var workerId = i + 1;
         _ = Task.Run(async () =>
         {
-            Log.Information($"Worker {workerId} Started");
+            Log.Information("Worker {WorkerId} Started", workerId);
             await ProcessJobsFromChannel(workerId);
         });
     }
@@ -138,7 +138,8 @@ try
             queuePosition = jobQueue.IndexOf(jobId);
         }
 
-        Log.Information($"[{jobId}] Queued at position {queuePosition}");
+        JobLog.For(JobEvents.JobQueued, jobId)
+              .Information("Job queued at position {QueuePosition}", queuePosition);
 
         // Return immediately with job ID
         return Results.Ok(new { jobId, status = "queued", queuePosition  });
@@ -182,6 +183,8 @@ try
 
     app.Run();
 
+    Log.Information("WinWhisperServer stopped");
+
     // =============================================================================
     // BACKGROUND WORKER
     // =============================================================================
@@ -192,11 +195,12 @@ try
         {
             if (!jobs.TryGetValue(jobId, out var job))
             {
-                Log.Information($"[Worker {workerId}] Job {jobId} not found, skipping");
+                Log.Warning("Worker {WorkerId} dequeued unknown Job {JobId}", workerId, jobId);
                 continue;
             }
 
-            Log.Information($"[Worker {workerId}] Processing job {jobId}");
+            JobLog.For(JobEvents.JobStarted, jobId)
+                  .Information("Job processing started");
 
             var filePath = Path.Combine(job.RequestDir, job.FileName);
             await ProcessJobAsync(job, app.Environment.ContentRootPath, filePath);
@@ -229,8 +233,6 @@ try
             {
                 argsBuilder.Append($" {whisperSettings.AdditionalArguments}");
             }
-
-            Log.Information($"[{job.Id}] Starting Whisper on: {job.FileName}");
 
             var process = new System.Diagnostics.Process
             {
@@ -277,12 +279,15 @@ try
             await outputTask;
             await process.WaitForExitAsync();
 
-            Log.Information($"[{job.Id}] Whisper exit code: {process.ExitCode}");
+            JobLog.For(JobEvents.WhisperExit, job.Id)
+                  .Debug("Whisper exited with code {ExitCode}", process.ExitCode);
 
             if (process.ExitCode != 0)
             {
                 job.Status = "error";
                 job.Error = $"Whisper exited with code {process.ExitCode}";
+                JobLog.For(JobEvents.JobFailed, job.Id)
+                      .Error("Job failed with exit code {ExitCode}", process.ExitCode);
                 return;
             }
 
@@ -309,13 +314,15 @@ try
             job.Progress = 100;
             job.Status = "complete";
 
-            Log.Information($"[{job.Id}] Transcription complete in {job.Duration}");
+            JobLog.For(JobEvents.JobCompleted, job.Id)
+                  .Information("Job completed successfully in {Duration}", job.Duration);
         }
         catch (Exception ex)
         {
             job.Status = "error";
             job.Error = ex.Message;
-            Log.Error($"[{job.Id}] Error: {ex.Message}");
+            JobLog.For(JobEvents.JobFailed, job.Id)
+                  .Error(ex, "job failed");
         }
         finally
         {
@@ -333,10 +340,19 @@ try
                 {
                     Directory.Delete(job.RequestDir, recursive: true);
                     jobs.TryRemove(job.Id, out _);
-                    Log.Information($"[{job.Id}] Cleaned up");
+                    JobLog.For(JobEvents.JobCleanedUp, job.Id)
+                          .Debug("Temporary files deleted");
                 }
                 catch { }
             });
+
+            JobLog.For(JobEvents.JobSummary, job.Id)
+                  .Information(
+                    "Job finished with status {Status} in {Duration}, outputs: {OutputFormats}",
+                    job.Status,
+                    job.Duration,
+                    job.Outputs?.Keys
+                  );
         }
     }
 
@@ -353,12 +369,15 @@ try
                     if (created < cutoff)
                     {
                         Directory.Delete(dir, recursive: true);
-                        Log.Information($"Startup cleanup: deleted orphaned directory {Path.GetFileName(dir)}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning($"Startup cleanup failed for {dir}: {ex.Message}");
+                    Log.Error(
+                        ex,
+                        "Failed to clean up orphaned job directory {Directory}",
+                        dir
+                    );
                 }
             }
         }
@@ -416,4 +435,22 @@ partial class Program
 
     [GeneratedRegex(@"Operation finished in:\s+(\d:\d{2}:\d{2}\.\d{3})")]
     private static partial Regex TranscriptionDurationRegex();
+}
+
+partial class JobLog
+{
+    public static Serilog.ILogger For(string eventType, string jobId)
+        => Log.ForContext("EventType", eventType)
+              .ForContext("JobId", jobId);
+}
+
+partial class JobEvents
+{
+    public const string JobQueued     = "JobQueued";
+    public const string JobStarted    = "JobStarted";
+    public const string JobCompleted  = "JobCompleted";
+    public const string JobFailed     = "JobFailed";
+    public const string JobCleanedUp  = "JobCleanedUp";
+    public const string JobSummary    = "JobSummary";
+    public const string WhisperExit   = "WhisperExit";
 }
