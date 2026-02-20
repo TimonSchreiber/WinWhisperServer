@@ -174,27 +174,39 @@ Edit `appsettings.json` to customize:
 
 ## Logging
 
+WinWhisperServer uses Serilog for structured logging with multiple output destinations.
+
+### Initial Setup (EventLog)
+
+To enable Windows Event Log logging, register the source once (requires Administrator PowerShell):
+```powershell
+New-EventLog -LogName Application -Source "WinWhisperServer"
+```
+
+### Configuration
+
 Configure logging in `appsettings.json`:
 ```json
 {
   "Serilog": {
     "Using": [
       "Serilog.Sinks.File",
-      "Serilog.Sinks.EventLog"
+      "Serilog.Sinks.EventLog",
+      "Serilog.Expressions"
     ],
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning"
+      }
+    },
     "WriteTo": [
       {
         "Name": "File",
         "Args": {
-          "path": "logs/winwhisperserver-.log",
-          "restrictedToMinimumLevel": "Information"
-        }
-      },
-      {
-        "Name": "EventLog",
-        "Args": {
-          "source": "WinWhisperServer",
-          "restrictedToMinimumLevel": "Warning"
+          "path": "logs/general-.log",
+          "rollingInterval": "Day",
+          "retainedFileCountLimit": 14
         }
       }
     ]
@@ -202,12 +214,81 @@ Configure logging in `appsettings.json`:
 }
 ```
 
-| Sink | Location | Default Level |
-|------|----------|---------------|
-| File | `logs/` folder | Information |
-| EventLog | Windows Event Viewer -> Application | Warning |
+### Log Destinations
 
-To view Event Log: `Win+R` -> `eventvwr.msc` -> Windows Logs -> Application -> Filter by "WinWhisperServer"
+| Sink | Location | Default Content |
+|------|----------|-----------------|
+| File (general) | `logs/general-.log` | All application logs |
+| File (jobs) | `logs/jobs-.log` | Job events only (optional) |
+| EventLog | Event Viewer → Application | Configurable (optional) |
+| Console | Terminal window | Not enabled by default |
+
+### Event Types
+
+Job-related logs include an `EventType` property for filtering:
+
+| EventType | Description |
+|-----------|-------------|
+| `JobQueued` | File uploaded and queued |
+| `JobStarted` | Processing began |
+| `JobCompleted` | Transcription finished successfully |
+| `JobFailed` | Transcription failed |
+| `JobCleanedUp` | Temporary files deleted |
+| `JobSummary` | Transcription summary |
+| `WhisperExit` | Exit-Code of faster-whisper-xxl-exe |
+
+### Advanced: Filtered Logging
+
+To write specific events to separate destinations, use sub-loggers:
+```json
+{
+  "Name": "Logger",
+  "Args": {
+    "configureLogger": {
+      "Filter": [
+        {
+          "Name": "ByIncludingOnly",
+          "Args": {
+            "expression": "@Properties['EventType'] like 'Job%'"
+          }
+        }
+      ],
+      "WriteTo": [
+        {
+          "Name": "File",
+          "Args": {
+            "path": "logs/jobs-.log",
+            "rollingInterval": "Day"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+### Enable Console Logging
+
+For interactive debugging, add to the `Using` and `WriteTo` arrays:
+```json
+{
+  "Serilog": {
+    "Using": [
+      "Serilog.Sinks.Console",
+      ...
+    ],
+    "WriteTo": [
+      { "Name": "Console" },
+      ...
+    ]
+  }
+}
+```
+
+### View Logs
+
+- **File logs:** Check the `logs/` folder
+- **Event Viewer:** `Win+R` → `eventvwr.msc` → Windows Logs → Application → Filter by "WinWhisperServer"
 
 ---
 
