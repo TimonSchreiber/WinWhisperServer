@@ -34,7 +34,7 @@ function showSelectedFile(file) {
 
   let warningHtml = showWarning
     ? `
-      <div class="file-warning">
+      <div class="warning">
         <span class="material-icons">warning</span>
         File might exceed upload limit of ${limitMB} MB
       </div>
@@ -85,7 +85,9 @@ async function uploadFile() {
   resultDiv.innerHTML = `
     <span class="material-icons">hourglass_empty</span>
     <strong>Uploading...</strong>
-    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
     <div id="progressText">0%</div>
   `;
 
@@ -111,7 +113,9 @@ async function uploadFile() {
     resultDiv.innerHTML = `
       <span class="material-icons">hourglass_empty</span>
       <strong>Processing...</strong>
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
       <div id="progressText">Queued...</div>
     `;
 
@@ -175,21 +179,39 @@ function showResult(data, originalFileName) {
   const formats = Object.keys(outputs);
 
   if (formats.length === 0) {
-      resultDiv.className = 'error';
-      resultDiv.innerHTML = `<span class="material-icons">error</span> No output files received`;
-      return;
+    resultDiv.className = 'error';
+    resultDiv.innerHTML = `<span class="material-icons">error</span> No output files received`;
+    return;
   }
 
   const durationText = data.duration
     ? `<p>Completed in: <strong>${data.duration}</strong></p>`
     : '';
 
+  const warningHtml = data.warnings
+    ? `
+      <div class="warning">
+        <div>
+          <span class="material-icons">warning</span>
+          <strong>Transcription may be incomplete.</strong>
+          <p>The audio processor reported issues, likely with the audio file itself.
+              Please review the result carefully, especially near the end.</p>
+          <details>
+            <summary>Technical details</summary>
+            <pre>${escapeHtml(data.warnings)}</pre>
+          </details>
+        </div>
+      </div>`
+    : '';
+
   // Create download buttons for each format
-  const downloadButtons = formats.map(format => `
-    <button class="btn download-btn" data-format="${format}" data-filename="${fileName}">
+  const downloadButtons = formats.map((format) =>
+    `
+      <button class="btn download-btn" data-format="${format}" data-filename="${fileName}">
         <span class="material-icons">download</span> ${fileName}.${format}
-    </button>
-  `).join('');
+      </button>
+    `
+  ).join('');
 
   // Preview: use order from settings, fallback to first available
   const previewFormat = appSettings.outputFormats.find((f) => formats.includes(f)) || formats[0];
@@ -197,8 +219,11 @@ function showResult(data, originalFileName) {
 
   resultDiv.className = 'success';
   resultDiv.innerHTML = `
-    <strong><span class="material-icons">check_circle</span> Transcription Complete!</strong>
+    <strong>
+      <span class="material-icons">check_circle</span> Transcription Complete!
+    </strong>
     ${durationText}
+    ${warningHtml}
     <div class="transcription-actions">
       ${downloadButtons}
     </div>
@@ -271,7 +296,9 @@ function showError(title, message, hint) {
     <span class="material-icons">error</span>
     <strong>${title}</strong>
     <p>${message}</p>
-    <p class="error-hint"><span class="material-icons">lightbulb</span> ${hint}</p>
+    <p class="error-hint">
+      <span class="material-icons">lightbulb</span> ${hint}
+    </p>
   `;
 }
 
@@ -334,7 +361,7 @@ async function handleHttpError(response, fileSizeMB) {
 function handleNetworkError(error) {
   console.error('Network error:', error);
 
-  // Check for specifix error types
+  // Check for specific error types
   if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
     showError(
       'Connection Failed',

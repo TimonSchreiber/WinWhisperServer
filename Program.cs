@@ -44,12 +44,6 @@ try
         options.Limits.MaxRequestBodySize = maxBytes;
     });
 
-    // Apply default if no formats configured
-    if (whisperSettings.OutputFormats.Length == 0)
-    {
-        whisperSettings.OutputFormats = ["json", "srt"];
-    }
-
     var app = builder.Build();
 
     // Job storage
@@ -62,10 +56,11 @@ try
     List<string> jobQueue = [];
     object queueLock = new();
 
-    var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "uploads");
+    var contentRootPath = app.Environment.ContentRootPath;
+    var uploadsRoot = Path.Combine(contentRootPath, "uploads");
 
     // Clean up orphaned jobs from previous runs
-    CleanUpOrphanedJobs(uploadsRoot, jobSettings.OrphanedMaxAgeMinutes);
+    CleanUpOrphanedJobs();
 
     // Start background workers (one per MaxConcurrent)
     for (int i = 0; i < jobSettings.MaxConcurrent; i++)
@@ -117,7 +112,7 @@ try
         {
             Id = jobId,
             FileName = file.FileName,
-            Status = "queued",
+            Status = JobStatus.Queued,
             RequestDir = requestDir
         };
         jobs[jobId] = job;
@@ -141,8 +136,7 @@ try
         JobLog.For(JobEvents.JobQueued, jobId)
               .Information("Job queued at position {QueuePosition}", queuePosition);
 
-        // Return immediately with job ID
-        return Results.Ok(new { jobId, status = "queued", queuePosition  });
+        return Results.Ok(new { jobId, status = JobStatus.Queued, queuePosition });
     })
     .DisableAntiforgery();
 
@@ -168,7 +162,8 @@ try
             queuePosition,
             duration = job.Duration,
             outputs = job.Outputs,
-            error = job.Error
+            error = job.Error,
+            warnings = job.Warnings
         });
     });
 
@@ -203,7 +198,7 @@ try
                   .Information("Job processing started");
 
             var filePath = Path.Combine(job.RequestDir, job.FileName);
-            await ProcessJobAsync(job, app.Environment.ContentRootPath, filePath);
+            await ProcessJobAsync(job, filePath);
         }
     }
 
@@ -211,16 +206,67 @@ try
     // PROCESSING LOGIC
     // =============================================================================
 
-    async Task ProcessJobAsync(TranscriptionJob job, string contentRootPath, string filePath)
+    async Task ProcessJobAsync(TranscriptionJob job, string filePath)
     {
         try
         {
-            job.Status = "processing";
+            job.Status = JobStatus.Processing;
 
             var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
 
+            // Normalize audio if enabled
+            var fileToTranscribe = filePath;
+            if (whisperSettings.NormalizeAudio)
+            {
+                var ffmpegExe = Path.Combine(Path.GetDirectoryName(exePath)!, "ffmpeg.exe");
+                var normalizedPath = Path.Combine(
+                    job.RequestDir,
+                    $"normalized_{Path.GetFileNameWithoutExtension(filePath)}.{whisperSettings.NormalizeOutputExtension}"
+                );
+
+                var ffmpegArgs = whisperSettings.FfmpegArguments
+                    .Replace("{input}", filePath)
+                    .Replace("{output}", normalizedPath);
+
+                JobLog.For(JobEvents.Normalize, job.Id)
+                      .Information("Normalizing audio with ffmpeg");
+
+                var ffmpeg = new System.Diagnostics.Process
+                {
+                    StartInfo = {
+                        FileName = ffmpegExe,
+                        Arguments = ffmpegArgs,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WorkingDirectory = contentRootPath,
+                    }
+                };
+
+                ffmpeg.Start();
+                var ffmpegStderr = await ffmpeg.StandardError.ReadToEndAsync();
+                await ffmpeg.WaitForExitAsync();
+
+                if (ffmpeg.ExitCode == 0 && File.Exists(normalizedPath))
+                {
+                    JobLog.For(JobEvents.Normalize, job.Id)
+                          .Information("ffmpeg normalization successful");
+                    fileToTranscribe = normalizedPath;
+                }
+                else
+                {
+                    JobLog.For(JobEvents.Normalize, job.Id)
+                          .Warning(
+                            "ffmpeg normalization failed (exit {ExitCode}), proceeding with original. ffmpeg output: {FfmpegOutput}",
+                            ffmpeg.ExitCode,
+                            ffmpegStderr
+                          );
+                }
+            }
+
             var argsBuilder = new StringBuilder();
-            argsBuilder.Append($"\"{filePath}\" -pp -o source");
+            argsBuilder.Append($"\"{fileToTranscribe}\" -pp -o source");
             argsBuilder.Append($" -f {string.Join(" ", whisperSettings.OutputFormats)}");
             argsBuilder.Append($" -m {whisperSettings.Model}");
 
@@ -236,8 +282,7 @@ try
 
             var process = new System.Diagnostics.Process
             {
-                StartInfo =
-                {
+                StartInfo = {
                     FileName = exePath,
                     Arguments = argsBuilder.ToString(),
                     RedirectStandardOutput = true,
@@ -250,7 +295,7 @@ try
 
             process.Start();
 
-            // Read stdout in real time for progress updates
+            // Read stdout for progress updates and job duration
             var outputTask = Task.Run(async () =>
             {
                 while (true)
@@ -260,6 +305,7 @@ try
                     {
                         break;
                     }
+
                     // Parse progress if present
                     var progressMatch = ProgressPercentageRegex().Match(line);
                     if (progressMatch.Success && int.TryParse(progressMatch.Groups[1].Value, out var pct))
@@ -267,7 +313,7 @@ try
                         job.Progress = pct;
                     }
 
-                    // Parse duration if present
+                    // Parse job duration if present
                     var durationMatch = TranscriptionDurationRegex().Match(line);
                     if (durationMatch.Success)
                     {
@@ -276,24 +322,48 @@ try
                 }
             });
 
-            await outputTask;
-            await process.WaitForExitAsync();
+            // Read stderr for any error messages
+            var stderrBuilder = new StringBuilder();
+            var errorTask = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    var line = await process.StandardError.ReadLineAsync();
+                    if (line == null)
+                    {
+                        break;
+                    }
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        stderrBuilder.AppendLine(line);
+                    }
+                }
+            });
 
-            JobLog.For(JobEvents.WhisperExit, job.Id)
-                  .Debug("Whisper exited with code {ExitCode}", process.ExitCode);
+            await Task.WhenAll(outputTask, errorTask);
+            await process.WaitForExitAsync();
 
             if (process.ExitCode != 0)
             {
-                job.Status = "error";
+                job.Status = JobStatus.Error;
                 job.Error = $"Whisper exited with code {process.ExitCode}";
                 JobLog.For(JobEvents.JobFailed, job.Id)
                       .Error("Job failed with exit code {ExitCode}", process.ExitCode);
                 return;
             }
 
+            // Collect any stderr output as warning if job succeeded but there were messages
+            var stderrOutput = stderrBuilder.ToString().Trim();
+            if (!string.IsNullOrEmpty(stderrOutput))
+            {
+                job.Warnings = stderrOutput;
+                JobLog.For(JobEvents.WhisperStderr, job.Id)
+                      .Warning("Whisper stderr output: {Warnings}", stderrOutput);
+            }
+
             // Read all output files
             job.Outputs = [];
-            var baseFileName = Path.GetFileNameWithoutExtension(job.FileName);
+            var baseFileName = Path.GetFileNameWithoutExtension(fileToTranscribe);
 
             foreach (var format in whisperSettings.OutputFormats)
             {
@@ -306,20 +376,20 @@ try
 
             if (job.Outputs.Count == 0)
             {
-                job.Status = "error";
-                job.Error = "No output files not found after processing";
+                job.Status = JobStatus.Error;
+                job.Error = "No output files found after processing";
                 return;
             }
 
             job.Progress = 100;
-            job.Status = "complete";
+            job.Status = JobStatus.Complete;
 
             JobLog.For(JobEvents.JobCompleted, job.Id)
                   .Information("Job completed successfully in {Duration}", job.Duration);
         }
         catch (Exception ex)
         {
-            job.Status = "error";
+            job.Status = JobStatus.Error;
             job.Error = ex.Message;
             JobLog.For(JobEvents.JobFailed, job.Id)
                   .Error(ex, "job failed");
@@ -348,19 +418,20 @@ try
 
             JobLog.For(JobEvents.JobSummary, job.Id)
                   .Information(
-                    "Job finished with status {Status} in {Duration}, outputs: {OutputFormats}",
+                    "Job finished with status {Status} in {Duration}, outputs: {OutputFormats}, warnings: {Warnings}",
                     job.Status,
                     job.Duration,
-                    job.Outputs?.Keys
+                    job.Outputs?.Keys,
+                    job.Warnings
                   );
         }
     }
 
-    void CleanUpOrphanedJobs(string uploadsRoot, int orphanedMaxAgeMinutes)
+    void CleanUpOrphanedJobs()
     {
         if (Directory.Exists(uploadsRoot))
         {
-            var cutoff = DateTime.UtcNow.AddMinutes(-orphanedMaxAgeMinutes);
+            var cutoff = DateTime.UtcNow.AddMinutes(-jobSettings.OrphanedMaxAgeMinutes);
             foreach (var dir in Directory.GetDirectories(uploadsRoot))
             {
                 try
@@ -392,16 +463,16 @@ finally
     Log.CloseAndFlush();
 }
 
-
 record TranscriptionJob
 {
     public string Id { get; init; } = "";
     public string FileName { get; init; } = "";
-    public string Status { get; set; } = "queued";
+    public string Status { get; set; } = JobStatus.Queued;
     public int? Progress { get; set; } = null;
     public string? Duration { get; set; }
     public Dictionary<string, string>? Outputs { get; set; }
     public string? Error { get; set; }
+    public string? Warnings { get; set; }
     public string RequestDir { get; set; } = "";
 }
 
@@ -411,8 +482,10 @@ record WhisperSettings
     public string Model { get; set; } = "medium";
     public string Language { get; set; } = "";
     public string AdditionalArguments { get; set; } = "";
-
     public string[] OutputFormats { get; set; } = [];
+    public bool NormalizeAudio { get; set; } = true;
+    public string NormalizeOutputExtension { get; set; } = "wav";
+    public string FfmpegArguments { get; set; } = "-y -i \"{input}\" -ar 16000 -ac 1 \"{output}\"";
 }
 
 record JobSettings
@@ -444,6 +517,14 @@ partial class JobLog
               .ForContext("JobId", jobId);
 }
 
+partial class JobStatus
+{
+    public const string Queued      = "queued";
+    public const string Processing  = "processing";
+    public const string Complete    = "complete";
+    public const string Error       = "error";
+}
+
 partial class JobEvents
 {
     public const string JobQueued     = "JobQueued";
@@ -452,5 +533,6 @@ partial class JobEvents
     public const string JobFailed     = "JobFailed";
     public const string JobCleanedUp  = "JobCleanedUp";
     public const string JobSummary    = "JobSummary";
-    public const string WhisperExit   = "WhisperExit";
+    public const string Normalize     = "Normalize";
+    public const string WhisperStderr = "WhisperStderr";
 }

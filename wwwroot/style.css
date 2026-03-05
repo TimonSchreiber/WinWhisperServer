@@ -64,7 +64,7 @@ input[type="file"] {
   display: none;
 }
 
-.file-warning {
+.warning {
   color: #856404;
   background: #fff3cd;
   padding: 8px 12px;
@@ -75,7 +75,7 @@ input[type="file"] {
   gap: 8px;
 }
 
-.file-warning .material-icons {
+.warning .material-icons {
   color: #d39e00;
 }
 

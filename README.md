@@ -1,13 +1,15 @@
 # WinWhisperServer
 
-A Windows web server for speech-to-text transcription, powered by [Faster Whisper XXL](https://github.com/Purfview/whisper-standalone-win). Upload audio files through a simple browser interface and receive transcriptions in SRT or plain text format.
+A Windows web server for speech-to-text transcription, powered by [Faster Whisper XXL](https://github.com/Purfview/whisper-standalone-win). Upload audio files through a simple browser interface and receive transcriptions in multiple format.
 
 ## Features
 
 - Drag & drop file upload
 - Real-time progress tracking
-- Download results as `.srt` (subtitles) or `.txt` (plain text)
-- Background job processing (non-blocking)
+- Download results in multiple formats (SRT, TXT, JSON, VTT, LRC, TSV, TEXT)
+- Background job processing with FIFO queue
+- Audio normalization to fix broken/malformed audio files before transcription
+- Warnings when the audio processor reports issues with a file
 - Can run as Windows Service
 
 ---
@@ -32,12 +34,15 @@ publish/
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
+│   ├── material-icons.css
+│   └── fonts/
+│       └── material-icons.woff2
 └── whisper/                      ← Create this folder if necessary
     ├── faster-whisper-xxl.exe    ← Copy from downloaded release
     └── ... (all other files from the release)
 ```
 
-Copy the **entire contents** of the Faster Whisper XXL release into the `publish/whisper/` folder.
+Copy the **entire contents** of the Faster Whisper XXL release into the `/whisper` folder.
 
 ### 3. Run the Application
 
@@ -106,10 +111,7 @@ Or use the Services GUI: Press `Win+R`, type `services.msc`, find "WhisperServic
 
 ### View Logs
 
-When running as a service, console output goes to the Windows Event Log:
-- Open Event Viewer (`eventvwr.msc`)
-- Navigate to: Windows Logs -> Application
-- Filter by source: WhisperService
+When running as a service, logs are written to the `logs/` folder and optionally to the Windows Event Log (see Logging section).
 
 ---
 
@@ -120,11 +122,14 @@ WinWhisperServer/
 ├── publish/                    # Ready-to-run application
 │   ├── WinWhisperServer.exe
 │   ├── wwwroot/
+│   │   ├── index.html
+│   │   ├── app.js
+│   │   ├── style.css
+│   │   ├── material-icons.css
+│   │   └── fonts/
+│   │       └── material-icons.woff2
 │   └── whisper/                # Add Faster Whisper here
 ├── wwwroot/                    # Frontend source files
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
 ├── uploads/                    # Temporary upload directory (auto-created)
 ├── whisper/                    # Development: Faster Whisper location
 ├── Program.cs                  # Backend source code
@@ -144,12 +149,19 @@ Edit `appsettings.json` to customize:
     "ExecutablePath": "whisper/faster-whisper-xxl.exe",
     "Model": "medium",
     "Language": "",
-    "AdditionalArguments": ""
+    "AdditionalArguments": "",
+    "OutputFormats": ["json", "srt"],
+    "NormalizeAudio": true,
+    "NormalizeOutputExtension": "wav",
+    "FfmpegArguments": "-y -i \"{input}\" -ar 16000 -ac 1 \"{output}\""
   },
   "Jobs": {
     "MaxConcurrent": 1,
-    "CompletedRetentionMinutes": 10,
+    "CompletedJobRetentionMinutes": 10,
     "OrphanedMaxAgeMinutes": 30
+  },
+  "Upload": {
+    "MaxFileSizeMB": 30
   }
 }
 ```
@@ -159,6 +171,13 @@ Edit `appsettings.json` to customize:
 | `Model` | tiny, base, small, medium, large-v2 |
 | `Language` | Empty for auto-detect, or: en, de, fr, etc. |
 | `MaxConcurrent` | Number of parallel transcriptions |
+| `OutputFormats` | List of formats to generate: srt, txt, json, vtt, lrc, tsv, text |
+| `NormalizeAudio` | Re-process audio through ffmpeg before transcription. Fixes broken headers from some recording devices. Default: true |
+| `NormalizeOutputExtension` | Output format for normalized audio. Only change this if you also change `FfmpegArguments` to produce a different format. Default: wav |
+| `FfmpegArguments` | ffmpeg command arguments. `{input}` and `{output}` are replaced at runtime. Default re-encodes to 16kHz mono WAV, which is Whisper's native format |
+| `MaxFileSizeMB` | Maximum upload size in MB. Default: 30 |
+| `CompletedJobRetentionMinutes` | How long to keep job results available after completion. Default: 10 |
+| `OrphanedMaxAgeMinutes` | On startup, delete upload directories older than this. Default: 30 |
 
 ### Whisper Model Options
 
@@ -234,8 +253,9 @@ Job-related logs include an `EventType` property for filtering:
 | `JobCompleted` | Transcription finished successfully |
 | `JobFailed` | Transcription failed |
 | `JobCleanedUp` | Temporary files deleted |
-| `JobSummary` | Transcription summary |
-| `WhisperExit` | Exit-Code of faster-whisper-xxl-exe |
+| `JobSummary` | Final status summary including duration and output formats |
+| `Normalize` | ffmpeg normalization step (success or failure) |
+| `WhisperStderr` | Raw stderr output from faster-whisper-xxl, if any |
 
 ### Advanced: Filtered Logging
 
@@ -345,11 +365,14 @@ The script:
 ### "Das System kann die angegebene Datei nicht finden"
 The `whisper/faster-whisper-xxl.exe` is missing. Make sure you copied Faster Whisper into the correct folder.
 
+## Transcription stops before the end of the file
+Some voice recorders write malformed audio headers, causing faster-whisper to underestimate the file length and stop early. Enable `NormalizeAudio` in `appsettings.json` (default: true) to have ffmpeg re-encode the file before transcription, which resolves this. If the issue persists, the result panel will show a warning with technical details from the audio processor.
+
 ### First run is slow
 Whisper downloads the model on first use. This can take a few minutes depending on model size and internet speed.
 
 ### Windows SmartScreen warning
-On first run, Windows may block the executable. Run faster-whisper-xxl manually and click "More info" -> "Run anyway".
+On first run, Windows may block the executable. Run faster-whisper-xxl manually and click "More info" → "Run anyway".
 
 ### Port already in use
 Another application is using port 5162. Either stop that application or use a different port:
@@ -364,17 +387,18 @@ WinWhisperServer.exe --urls "http://0.0.0.0:8080"
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | Redirects to index.html |
-| POST | `/api/upload` | Upload audio file, returns job ID |
 | GET | `/api/status/{jobId}` | Get job status and results |
+| GET | `/api/settings` | Returns configured output formats and upload limit |
+| POST | `/api/upload` | Upload audio file, returns job ID |
 
 ### Example: Upload via curl
 
 ```bash
 curl -X POST -F "file=@audio.wav" http://localhost:5162/api/upload
-# Returns: {"jobId": "abc123", "status": "queued"}
+# Returns: {"jobId": "abc123", "status": "queued", "queuePosition": 0}
 
 curl http://localhost:5162/api/status/abc123
-# Returns: {"status": "complete", "transcription": "...", ...}
+# Returns: {"status": "complete", "outputs": {"srt": "...", "txt": "..."}, "duration": "0:00:42.000", "warnings": null, ...}
 ```
 
 ---
@@ -384,11 +408,7 @@ curl http://localhost:5162/api/status/abc123
 - **Backend:** ASP.NET Core (.NET 10, Minimal API)
 - **Frontend:** Vanilla HTML/CSS/JavaScript
 - **Transcription:** Faster Whisper XXL (standalone)
-- **Icons:** Google Material Icons
-
----
-
-## TODO
+- **Icons:** Material Icons (self-hosted, no external requests)
 
 ---
 
