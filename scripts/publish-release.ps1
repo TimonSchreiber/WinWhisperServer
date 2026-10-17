@@ -2,7 +2,6 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
-
     [switch]$SkipTests,
     [switch]$CreateZip
 )
@@ -63,7 +62,7 @@ if (-not $SkipTests) {
 
     try {
         Start-Sleep -Seconds 3
-        $response = Invoke-RestMethod "http://localhost:$port/api/settings" -TimeoutSec 5
+        $null = Invoke-RestMethod "http://localhost:$port/api/settings" -TimeoutSec 5
         Write-Host "  PASS: Server started and responded" -ForegroundColor Green
     } catch {
         Write-Host "  FAIL: Server did not respond - $_" -ForegroundColor Red
@@ -79,7 +78,7 @@ if (-not $SkipTests) {
 
     try {
         Start-Sleep -Seconds 3
-        $response = Invoke-RestMethod "http://localhost:$port/api/settings" -TimeoutSec 5
+        $null = Invoke-RestMethod "http://localhost:$port/api/settings" -TimeoutSec 5
         Write-Host "  PASS: Server started from system32" -ForegroundColor Green
     } catch {
         Write-Host "  FAIL: Server did not start from system32 - $_" -ForegroundColor Red
