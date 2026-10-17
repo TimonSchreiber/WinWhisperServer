@@ -67,14 +67,12 @@ function showSelectedFile(file) {
   const warningThreshold = limitMB * 0.9;
   const showWarning = fileSizeMB > warningThreshold;
 
-  let warningHtml = showWarning
-    ? `
+  let warningHtml = showWarning ? `
       <div class="warning">
         <span class="material-icons">warning</span>
         File might exceed upload limit of ${limitMB} MB
       </div>
-    `
-    : '';
+    ` : '';
 
   fileNameDiv.innerHTML = `
     Selected file: <strong>${file.name}</strong> (${sizeText})
@@ -84,6 +82,7 @@ function showSelectedFile(file) {
   transcribeBtn.disabled = false;
 }
 
+// Format bytes to human-readable string
 function formatBytes(bytes) {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
@@ -92,6 +91,7 @@ function formatBytes(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+// Download file helper function
 function downloadFile(content, fileName, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -104,6 +104,7 @@ function downloadFile(content, fileName, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+// Upload file and handle response
 async function uploadFile() {
   const file = fileInput.files[0];
   if (!file) return;
@@ -178,6 +179,7 @@ async function uploadFile() {
   }
 }
 
+// Poll the server for job completion
 async function pollForCompletion(jobId) {
   const progressFill = document.getElementById('progressFill');
   const progressText = document.getElementById('progressText');
@@ -208,6 +210,7 @@ async function pollForCompletion(jobId) {
   }
 }
 
+// Display the result and provide download options
 function showResult(data, originalFileName) {
   const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
   const outputs = data.outputs || {};
@@ -287,6 +290,7 @@ function showResult(data, originalFileName) {
   });
 }
 
+// Escape HTML to prevent XSS in preview
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
@@ -337,6 +341,7 @@ function showError(title, message, hint) {
   `;
 }
 
+// Handle HTTP errors based on status code
 async function handleHttpError(response, fileSizeMB) {
   const status = response.status;
 
@@ -393,6 +398,7 @@ async function handleHttpError(response, fileSizeMB) {
   }
 }
 
+// Handle network errors (e.g., connection issues, timeouts)
 function handleNetworkError(error) {
   console.error('Network error:', error);
 
