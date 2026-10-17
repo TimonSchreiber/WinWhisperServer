@@ -169,6 +169,7 @@ Edit `appsettings.json` to customize:
 
 | Setting | Description |
 |---------|-------------|
+| `ExecutablePath` | Path to the executable |
 | `Model` | tiny, base, small, medium, large-v2 |
 | `Language` | Empty for auto-detect, or: en, de, fr, etc. |
 | `AdditionalArguments` | Any other arguments to pass to the executable |
