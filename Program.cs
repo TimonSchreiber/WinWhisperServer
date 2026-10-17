@@ -33,6 +33,13 @@ try
     // Translate User specified upload size from MB to Bytes. Windows effectively uses MiB anyway. Interprets bigger values like 1000 MB as 1 GiB
     var maxBytes = uploadSettings.MaxFileSizeMB * (int)Math.Pow(1_024, 2 + Math.Floor(Math.Log(uploadSettings.MaxFileSizeMB, 1_000)));
 
+    // Normalize allowed extensions to lowercase and ensure they start with a dot
+    var allowedExtensions = uploadSettings.AllowedExtensions
+        .Select(ext => ext.Trim().ToLowerInvariant())
+        .Where(ext => ext.Length > 0)
+        .Select(ext => ext.StartsWith('.') ? ext : "." + ext)
+        .ToHashSet();
+
     // Set upload size limit (default is 30MiB)
     builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
     {
@@ -91,6 +98,19 @@ try
         if (file is null || file.Length == 0)
         {
             return Results.BadRequest(new { error = "No file uploaded." });
+        }
+
+        // Check extension against allowed list
+        if (allowedExtensions.Count > 0)
+        {
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (!allowedExtensions.Contains(ext))
+            {
+                return Results.BadRequest(new
+                {
+                    error = $"File type '{ext}' is not allowed. Allowed: {string.Join(", ", allowedExtensions)}"
+                });
+            }
         }
 
         // Create unique directory for this request
@@ -172,7 +192,8 @@ try
         return Results.Ok(new
         {
             maxFileSizeMB = uploadSettings.MaxFileSizeMB,
-            outputFormats = whisperSettings.OutputFormats
+            outputFormats = whisperSettings.OutputFormats,
+            allowedExtensions
         });
     });
 
@@ -498,6 +519,7 @@ record JobSettings
 record UploadSettings
 {
     public int MaxFileSizeMB { get; set; } = 30;
+    public string[] AllowedExtensions { get; set; } = [];
 }
 
 partial class Program

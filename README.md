@@ -161,7 +161,8 @@ Edit `appsettings.json` to customize:
     "OrphanedMaxAgeMinutes": 30
   },
   "Upload": {
-    "MaxFileSizeMB": 30
+    "MaxFileSizeMB": 30,
+    "AllowedExtensions": [".wav", ".mp3", ".m4a", ".flac", ".ogg"]
   }
 }
 ```
@@ -170,14 +171,16 @@ Edit `appsettings.json` to customize:
 |---------|-------------|
 | `Model` | tiny, base, small, medium, large-v2 |
 | `Language` | Empty for auto-detect, or: en, de, fr, etc. |
-| `MaxConcurrent` | Number of parallel transcriptions |
+| `AdditionalArguments` | Any other arguments to pass to the executable |
 | `OutputFormats` | List of formats to generate: srt, txt, json, vtt, lrc, tsv, text |
 | `NormalizeAudio` | Re-process audio through ffmpeg before transcription. Fixes broken headers from some recording devices. Default: true |
 | `NormalizeOutputExtension` | Output format for normalized audio. Only change this if you also change `FfmpegArguments` to produce a different format. Default: wav |
 | `FfmpegArguments` | ffmpeg command arguments. `{input}` and `{output}` are replaced at runtime. Default re-encodes to 16kHz mono WAV, which is Whisper's native format |
-| `MaxFileSizeMB` | Maximum upload size in MB. Default: 30 |
+| `MaxConcurrent` | Number of parallel transcriptions |
 | `CompletedJobRetentionMinutes` | How long to keep job results available after completion. Default: 10 |
 | `OrphanedMaxAgeMinutes` | On startup, delete upload directories older than this. Default: 30 |
+| `MaxFileSizeMB` | Maximum upload size in MB. Default: 30 |
+| `AllowedExtensions` | Accepted upload file extensions, e.g. `[".wav", ".mp3"]`. Case-insensitive, leading dot optional. Empty list allows all types. Other files are rejected with HTTP 400 |
 
 ### Whisper Model Options
 
@@ -388,7 +391,7 @@ WinWhisperServer.exe --urls "http://0.0.0.0:8080"
 |--------|----------|-------------|
 | GET | `/` | Redirects to index.html |
 | GET | `/api/status/{jobId}` | Get job status and results |
-| GET | `/api/settings` | Returns configured output formats and upload limit |
+| GET | `/api/settings` | Returns configured output formats, upload limit and allowed file extensions |
 | POST | `/api/upload` | Upload audio file, returns job ID |
 
 ### Example: Upload via curl

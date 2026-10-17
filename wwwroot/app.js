@@ -2,20 +2,10 @@
 let appSettings = {
   maxFileSizeMB: 30,
   outputFormats: ['json', 'srt'],
+  allowedExtensions: [],
 };
 
-// Load settings from backend
-(async function loadSettings() {
-  try {
-    const response = await fetch('/api/settings');
-    if (response.ok) {
-      appSettings = await response.json();
-    }
-  } catch (error) {
-    console.warn('Could not load settings, using default values:', error);
-  }
-})();
-
+// DOM Elements
 const fileInput = document.getElementById('fileInput');
 const fileSelectArea = document.getElementById('fileSelectArea');
 const transcribeBtn = document.getElementById('transcribeBtn');
@@ -23,7 +13,52 @@ const browseBtn = document.getElementById('browseBtn');
 const fileNameDiv = document.getElementById('fileName');
 const resultDiv = document.getElementById('result');
 
+// Load settings from backend
+async function loadSettings() {
+  try {
+    const response = await fetch('/api/settings');
+    if (response.ok) {
+      appSettings = { ...appSettings, ...(await response.json()) };
+    }
+  } catch (error) {
+    console.warn('Could not load settings, using default values:', error);
+  }
+};
+
+// applay Settings
+function applySettings() {
+  const exts = appSettings.allowedExtensions;
+  if (exts?.length) {
+    fileInput.accept = exts.join(',')
+  }
+
+  // else: keep the fallback accept from index.html, which allows common audio formats
+}
+
+// Check if the file extension is allowed
+function isAllowedFile(file) {
+  const exts = appSettings.allowedExtensions;
+  if (!exts?.length) return true;
+  const dot = file.name.lastIndexOf('.');
+  const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
+  return exts.includes(ext);
+}
+
+// Show selected file info and enable transcribe button
 function showSelectedFile(file) {
+  // Check if the file type is allowed
+  if (!isAllowedFile(file)) {
+    fileNameDiv.innerHTML = `
+      <div class="warning">
+        <span class="material-icons">warning</span>
+        Unsupported file type. Allowed: ${appSettings.allowedExtensions.join(', ')}
+      </div>
+    `;
+    transcribeBtn.disabled = true;
+    return;
+  }
+
+  // Display file name and size
   const sizeText = formatBytes(file.size);
   const fileSizeMB = file.size / (1024 * 1024);
   const limitMB = appSettings.maxFileSizeMB;
@@ -394,3 +429,7 @@ function handleNetworkError(error) {
     );
   }
 }
+
+// Initialize the app by loading and applying the settings
+await loadSettings();
+applySettings();
