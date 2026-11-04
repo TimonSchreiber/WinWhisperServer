@@ -429,6 +429,12 @@ obj/
 !/uploads
 /uploads/*
 
+!/logs
+/logs/*
+
+!/stats
+/stats/*
+
 *.zip
 
 publish-test/

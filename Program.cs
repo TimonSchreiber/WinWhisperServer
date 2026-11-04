@@ -1,5 +1,6 @@
 using Serilog;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
@@ -66,6 +67,10 @@ try
     var contentRootPath = app.Environment.ContentRootPath;
     var uploadsRoot = Path.Combine(contentRootPath, "uploads");
 
+    // Usage statistics, persisted independently of the log files and their retention
+    var serverStartedAt = DateTimeOffset.Now;
+    var jobStats = new JobStatsStore(Path.Combine(contentRootPath, "stats", "job-stats.jsonl"));
+
     // Clean up orphaned jobs from previous runs
     CleanUpOrphanedJobs();
 
@@ -80,11 +85,9 @@ try
         });
     }
 
-    // Serve static files from wwwroot folder (for index.html, css, js, etc.)
+    // Serve static files from wwwroot
+    app.UseDefaultFiles();
     app.UseStaticFiles();
-
-    // Redirect root "/" to index.html
-    app.MapGet("/", () => Results.Redirect("/index.html"));
 
     // =============================================================================
     // YOUR API ENDPOINTS
@@ -100,10 +103,14 @@ try
             return Results.BadRequest(new { error = "No file uploaded." });
         }
 
+        // The name comes from the client, so it may contain a path ("../../x") or characters that would
+        // break the quoted ffmpeg/whisper arguments. Only the cleaned name is used from here on.
+        var fileName = SanitizeFileName(file.FileName);
+
         // Check extension against allowed list
         if (allowedExtensions.Count > 0)
         {
-            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
             if (!allowedExtensions.Contains(ext))
             {
                 return Results.BadRequest(new
@@ -121,7 +128,7 @@ try
         Directory.CreateDirectory(requestDir);
 
         // Save the uploaded file
-        var savedFilePath = Path.Combine(requestDir, file.FileName);
+        var savedFilePath = Path.Combine(requestDir, fileName);
         await using (var fs = new FileStream(savedFilePath, FileMode.Create))
         {
             await file.CopyToAsync(fs);
@@ -131,7 +138,8 @@ try
         var job = new TranscriptionJob
         {
             Id = jobId,
-            FileName = file.FileName,
+            FileName = fileName,
+            FileSizeBytes = file.Length,
             Status = JobStatus.Queued,
             RequestDir = requestDir
         };
@@ -197,6 +205,27 @@ try
         });
     });
 
+    app.MapGet("/api/analytics", (int? days) =>
+    {
+        var recentDays = Math.Clamp(days ?? 30, 1, 366);
+        var report = jobStats.GetAnalytics(recentDays);
+        var activeJobs = jobs.Values;
+
+        return Results.Ok(new
+        {
+            generatedAt = DateTimeOffset.Now,
+            serverStartedAt,
+            current = new
+            {
+                queued = activeJobs.Count(j => j.Status == JobStatus.Queued),
+                processing = activeJobs.Count(j => j.Status == JobStatus.Processing),
+            },
+            trackingSince = report.TrackingSince,
+            allTime = report.AllTime,
+            recent = report.Recent,
+        });
+    });
+
     app.Run();
 
     Log.Information("WinWhisperServer stopped");
@@ -231,6 +260,7 @@ try
     {
         try
         {
+            job.StartedAt = DateTimeOffset.Now;
             job.Status = JobStatus.Processing;
 
             var exePath = Path.Combine(contentRootPath, whisperSettings.ExecutablePath);
@@ -268,6 +298,8 @@ try
                 ffmpeg.Start();
                 var ffmpegStderr = await ffmpeg.StandardError.ReadToEndAsync();
                 await ffmpeg.WaitForExitAsync();
+
+                job.AudioDuration = ParseFfmpegAudioDuration(ffmpegStderr);
 
                 if (ffmpeg.ExitCode == 0 && File.Exists(normalizedPath))
                 {
@@ -423,6 +455,16 @@ try
                 jobQueue.Remove(job.Id);
             }
 
+            // Record usage statistics; a failure here must never affect the job itself
+            try
+            {
+                jobStats.Add(JobStatRecord.FromJob(job, DateTimeOffset.Now));
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to record statistics for job {JobId}", job.Id);
+            }
+
             // Clean up files after a delay
             _ = Task.Run(async () =>
             {
@@ -495,6 +537,10 @@ record TranscriptionJob
     public string? Error { get; set; }
     public string? Warnings { get; set; }
     public string RequestDir { get; set; } = "";
+    public long FileSizeBytes { get; init; }
+    public DateTimeOffset QueuedAt { get; init; } = DateTimeOffset.Now;
+    public DateTimeOffset? StartedAt { get; set; }
+    public TimeSpan? AudioDuration { get; set; }
 }
 
 record WhisperSettings
@@ -530,6 +576,45 @@ partial class Program
 
     [GeneratedRegex(@"Operation finished in:\s+(\d:\d{2}:\d{2}\.\d{3})")]
     private static partial Regex TranscriptionDurationRegex();
+
+    // ffmpeg progress lines ("size=... time=00:01:23.45 bitrate=..."); the last one is the decoded length
+    [GeneratedRegex(@"time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")]
+    private static partial Regex FfmpegProgressTimeRegex();
+
+    // Input header ("Duration: 00:01:23.45, start: ..."); only a fallback, since malformed headers
+    // are exactly what NormalizeAudio exists to work around
+    [GeneratedRegex(@"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")]
+    private static partial Regex FfmpegHeaderDurationRegex();
+
+    // Characters Windows rejects in file names, applied on every OS so behaviour doesn't depend on where it runs
+    private static readonly HashSet<char> InvalidFileNameChars =
+        [.. Path.GetInvalidFileNameChars(), '"', '<', '>', '|', ':', '*', '?'];
+
+    private static string SanitizeFileName(string clientFileName)
+    {
+        // Path.GetFileName only knows the current OS's separator, so normalize both first
+        var name = Path.GetFileName(clientFileName.Replace('\\', '/'));
+        var cleaned = new string([.. name.Select(c => InvalidFileNameChars.Contains(c) || char.IsControl(c) ? '_' : c)])
+            .Trim(' ', '.');
+        return cleaned.Length > 0 ? cleaned : "upload";
+    }
+
+    private static TimeSpan? ParseFfmpegAudioDuration(string ffmpegOutput)
+    {
+        var progressMatches = FfmpegProgressTimeRegex().Matches(ffmpegOutput);
+        var match = progressMatches.Count > 0
+            ? progressMatches[^1]
+            : FfmpegHeaderDurationRegex().Match(ffmpegOutput);
+
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        return TimeSpan.FromHours(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture))
+             + TimeSpan.FromMinutes(int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture))
+             + TimeSpan.FromSeconds(double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture));
+    }
 }
 
 partial class JobLog

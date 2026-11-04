@@ -10,6 +10,7 @@ A Windows web server for speech-to-text transcription, powered by [Faster Whispe
 - Background job processing with FIFO queue
 - Audio normalization to fix broken/malformed audio files before transcription
 - Warnings when the audio processor reports issues with a file
+- Usage statistics page (job counts, transcribed hours, processing speed) with CSV export
 - Can run as Windows Service
 
 ---
@@ -32,13 +33,23 @@ publish/
 ├── WinWhisperServer.exe
 ├── wwwroot/
 │   ├── index.html
-│   ├── app.js
-│   └── style.css
-│   ├── material-icons.css
-│   └── fonts/
-│       └── material-icons.woff2
-└── whisper/                      ← Create this folder if necessary
-    ├── faster-whisper-xxl.exe    ← Copy from downloaded release
+│   ├── index.js
+│   ├── index.css
+│   ├── favicon.svg
+│   ├── analytics/
+│   │   ├── index.html
+│   │   ├── index.js
+│   │   └── index.css
+│   ├── shared/
+│   │   ├── common.js
+│   │   └── base.css
+│   └── lib/
+│       └── material-icons/
+│           ├── material-icons.css
+│           └── fonts/
+│               └── material-icons.woff2
+└── whisper/                              ← Create this folder if necessary
+    ├── faster-whisper-xxl.exe            ← Copy from downloaded release
     └── ... (all other files from the release)
 ```
 
@@ -123,16 +134,29 @@ WinWhisperServer/
 │   ├── WinWhisperServer.exe
 │   ├── wwwroot/
 │   │   ├── index.html
-│   │   ├── app.js
-│   │   ├── style.css
-│   │   ├── material-icons.css
-│   │   └── fonts/
-│   │       └── material-icons.woff2
+│   │   ├── index.js
+│   │   ├── index.css
+│   │   ├── favicon.svg
+│   │   ├── analytics/
+│   │   │   ├── index.html
+│   │   │   ├── index.js
+│   │   │   └── index.css
+│   │   ├── shared/
+│   │   │   ├── common.js
+│   │   │   └── base.css
+│   │   └── lib/
+│   │       └── material-icons/
+│   │           ├── material-icons.css
+│   │           └── fonts/
+│   │               └── material-icons.woff2
 │   └── whisper/                # Add Faster Whisper here
 ├── wwwroot/                    # Frontend source files
 ├── uploads/                    # Temporary upload directory (auto-created)
+├── stats/                      # Usage statistics (auto-created, keep when updating)
+├── logs/                       # Log directory
 ├── whisper/                    # Development: Faster Whisper location
-├── Program.cs                  # Backend source code
+├── Program.cs                  # Backend: host setup, endpoints, job processing
+├── JobStats.cs                 # Usage statistics store and aggregation
 ├── appsettings.json            # Config file
 ├── WinWhisperServer.csproj
 └── README.md
@@ -316,6 +340,58 @@ For interactive debugging, add to the `Using` and `WriteTo` arrays:
 
 ---
 
+## Usage Analytics
+
+The statistics page is linked from the transcription page and available at `/analytics`. It shows the current queue, summary figures for the last 7, 30 or 90 days, a per-day chart and a comparison with the complete history, and refreshes every 30 seconds while open.
+
+The CSV button downloads the figures shown: the summary for the selected period and for the complete history, followed by one row per day. Field separator and decimal mark follow the browser language, so that Excel opens the file correctly with German regional settings as well.
+
+The page reads its data from `GET /api/analytics`, which returns aggregated usage figures: number of jobs, transcribed audio hours, average audio length, processing time and queue wait. The optional `days` parameter sets the window of the `recent` section (default 30, maximum 366); `allTime` always covers the complete recorded history.
+
+Each finished job appends one line to `stats/job-stats.jsonl`. The file is deliberately kept separate from the log files: it is not subject to the 14-day log retention and does not depend on the Serilog configuration. It contains no file names and no transcript content, only job ID, status, file extension and size, timestamps and audio length. The `stats/` folder must be preserved when the application is updated; deleting it resets the statistics.
+
+```json
+{
+  "generatedAt": "2026-11-24T11:02:14+01:00",
+  "serverStartedAt": "2026-11-20T07:58:03+01:00",
+  "current": { "queued": 1, "processing": 1 },
+  "trackingSince": "2026-11-02T09:12:40+01:00",
+  "allTime": {
+    "jobs": 42,
+    "completed": 41,
+    "failed": 1,
+    "completedWithWarnings": 2,
+    "totalAudioHours": 9.35,
+    "averageAudioLength": "00:13:41",
+    "longestAudio": "01:02:10",
+    "totalProcessingHours": 9.51,
+    "averageProcessingTime": "00:13:55",
+    "realtimeFactor": 1.02,
+    "averageQueueWait": "00:04:12",
+    "longestQueueWait": "00:31:05"
+  },
+  "recent": {
+    "days": 30,
+    "summary": { "...": "same fields as allTime" },
+    "perDay": [
+      { "date": "2026-10-24", "jobs": 7, "failed": 0, "audioMinutes": 96.4, "processingMinutes": 99.1 }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `current` | Jobs currently waiting in the queue and in processing |
+| `trackingSince` | Upload time of the oldest recorded job |
+| `realtimeFactor` | Total processing time divided by total audio length of completed jobs. `1.0` means a 10-minute recording takes 10 minutes, `0.1` means it takes 1 minute. Includes normalization and model loading |
+| `averageQueueWait` | Time between upload and start of processing |
+| `perDay` | Jobs and transcribed audio minutes per calendar day (server time), including days without jobs |
+
+Audio length is taken from the ffmpeg output during normalization and is therefore only available with `NormalizeAudio` enabled; without it, all audio-based figures remain empty. Durations use the format `hh:mm:ss`, or `d.hh:mm:ss` beyond 24 hours. Jobs processed before this feature was installed are not included.
+
+---
+
 ## Development Setup
 
 For developers who want to modify the application.
@@ -390,9 +466,11 @@ WinWhisperServer.exe --urls "http://0.0.0.0:8080"
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | Redirects to index.html |
+| GET | `/` | Transcription page |
+| GET | `/analytics` | Usage statistics page |
 | GET | `/api/status/{jobId}` | Get job status and results |
 | GET | `/api/settings` | Returns configured output formats, upload limit and allowed file extensions |
+| GET | `/api/analytics?days=30` | Usage statistics, see [Usage Analytics](#usage-analytics) |
 | POST | `/api/upload` | Upload audio file, returns job ID |
 
 ### Example: Upload via curl

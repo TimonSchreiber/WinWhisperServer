@@ -1,3 +1,5 @@
+import { downloadFile, escapeHtml, showError } from '/shared/common.js';
+
 // Global settings
 let appSettings = {
   maxFileSizeMB: 30,
@@ -13,6 +15,9 @@ const browseBtn = document.getElementById('browseBtn');
 const fileNameDiv = document.getElementById('fileName');
 const resultDiv = document.getElementById('result');
 
+// A failure the server reported for this job, as opposed to a network problem
+class JobFailedError extends Error {}
+
 // Load settings from backend
 async function loadSettings() {
   try {
@@ -23,9 +28,9 @@ async function loadSettings() {
   } catch (error) {
     console.warn('Could not load settings, using default values:', error);
   }
-};
+}
 
-// applay Settings
+// Apply settings
 function applySettings() {
   const exts = appSettings.allowedExtensions;
   if (exts?.length) {
@@ -50,8 +55,8 @@ function showSelectedFile(file) {
   if (!isAllowedFile(file)) {
     fileNameDiv.innerHTML = `
       <div class="warning">
-        <span class="material-icons">warning</span>
-        Unsupported file type. Allowed: ${appSettings.allowedExtensions.join(', ')}
+        <span class="material-icons" aria-hidden="true">warning</span>
+        Unsupported file type. Allowed: ${escapeHtml(appSettings.allowedExtensions.join(', '))}
       </div>
     `;
     transcribeBtn.disabled = true;
@@ -69,13 +74,13 @@ function showSelectedFile(file) {
 
   let warningHtml = showWarning ? `
       <div class="warning">
-        <span class="material-icons">warning</span>
+        <span class="material-icons" aria-hidden="true">warning</span>
         File might exceed upload limit of ${limitMB} MB
       </div>
     ` : '';
 
   fileNameDiv.innerHTML = `
-    Selected file: <strong>${file.name}</strong> (${sizeText})
+    Selected file: <strong>${escapeHtml(file.name)}</strong> (${sizeText})
     ${warningHtml}
   `;
 
@@ -91,19 +96,6 @@ function formatBytes(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
-// Download file helper function
-function downloadFile(content, fileName, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 // Upload file and handle response
 async function uploadFile() {
   const file = fileInput.files[0];
@@ -116,15 +108,13 @@ async function uploadFile() {
   fileInput.disabled = true;
   fileSelectArea.classList.add('disabled');
   transcribeBtn.classList.add('loading');
+  transcribeBtn.setAttribute('aria-busy', 'true');
 
   resultDiv.className = 'processing';
   resultDiv.innerHTML = `
-    <span class="material-icons">hourglass_empty</span>
+    <span class="material-icons" aria-hidden="true">hourglass_empty</span>
     <strong>Uploading...</strong>
-    <div class="progress-bar">
-      <div class="progress-fill" id="progressFill"></div>
-    </div>
-    <div id="progressText">0%</div>
+    ${progressBarHtml('0%')}
   `;
 
   const formData = new FormData();
@@ -147,12 +137,9 @@ async function uploadFile() {
     const jobId = uploadData.jobId;
 
     resultDiv.innerHTML = `
-      <span class="material-icons">hourglass_empty</span>
+      <span class="material-icons" aria-hidden="true">hourglass_empty</span>
       <strong>Processing...</strong>
-      <div class="progress-bar">
-        <div class="progress-fill" id="progressFill"></div>
-      </div>
-      <div id="progressText">Queued...</div>
+      ${progressBarHtml('Queued...')}
     `;
 
     resultDiv.scrollIntoView({ behavior: 'smooth' });
@@ -163,6 +150,7 @@ async function uploadFile() {
   } catch (error) {
     if (error instanceof TypeError && fileSizeMB > appSettings.maxFileSizeMB) {
       showError(
+        resultDiv,
         'File Too Large',
         `Maximum allowed size is ${appSettings.maxFileSizeMB} MB. Your file is ${fileSizeMB.toFixed(1)} MB.`,
         'Try compressing the audio or splitting it into smaller parts.'
@@ -176,16 +164,35 @@ async function uploadFile() {
     fileInput.disabled = false;
     fileSelectArea.classList.remove('disabled');
     transcribeBtn.classList.remove('loading');
+    transcribeBtn.removeAttribute('aria-busy');
   }
+}
+
+// Progress bar markup; the per-second text updates are kept out of screen reader announcements
+function progressBarHtml(initialText) {
+  return `
+    <div class="progress-bar" id="progressBar" role="progressbar" aria-label="Progress"
+         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div id="progressText" aria-live="off">${initialText}</div>
+  `;
 }
 
 // Poll the server for job completion
 async function pollForCompletion(jobId) {
+  const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
   const progressText = document.getElementById('progressText');
 
   while (true) {
     const response = await fetch(`/api/status/${jobId}`);
+    if (response.status === 404) {
+      throw new JobFailedError('The server no longer knows this job, possibly because it was restarted.');
+    }
+    if (!response.ok) {
+      throw new Error(`Status request failed with HTTP ${response.status}`);
+    }
     const data = await response.json();
 
     switch (data.status) {
@@ -195,6 +202,7 @@ async function pollForCompletion(jobId) {
         break;
       case 'processing':
         progressFill.style.width = `${data.progress ?? 0}%`;
+        progressBar.setAttribute('aria-valuenow', String(data.progress ?? 0));
         progressText.textContent = data.progress == null
           ? 'Detecting Language...'
           : `Processing: ${data.progress}%`;
@@ -203,34 +211,35 @@ async function pollForCompletion(jobId) {
       case 'complete':
         return data;
       case 'error':
-        throw new Error(data.error ||'Processing failed');
+        throw new JobFailedError(data.error || 'Processing failed');
       default:
-        throw new Error(`Unknowd status: ${data.status}`);
+        throw new Error(`Unknown status: ${data.status}`);
     }
   }
 }
 
 // Display the result and provide download options
 function showResult(data, originalFileName) {
-  const fileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+  const dot = originalFileName.lastIndexOf('.');
+  const fileName = dot > 0 ? originalFileName.substring(0, dot) : originalFileName;
   const outputs = data.outputs || {};
   const formats = Object.keys(outputs);
 
   if (formats.length === 0) {
     resultDiv.className = 'error';
-    resultDiv.innerHTML = `<span class="material-icons">error</span> No output files received`;
+    resultDiv.innerHTML = `<span class="material-icons" aria-hidden="true">error</span> No output files received`;
     return;
   }
 
   const durationText = data.duration
-    ? `<p>Completed in: <strong>${data.duration}</strong></p>`
+    ? `<p>Completed in: <strong>${escapeHtml(data.duration)}</strong></p>`
     : '';
 
   const warningHtml = data.warnings
     ? `
       <div class="warning">
         <div>
-          <span class="material-icons">warning</span>
+          <span class="material-icons" aria-hidden="true">warning</span>
           <strong>Transcription may be incomplete.</strong>
           <p>The audio processor reported issues, likely with the audio file itself.
               Please review the result carefully, especially near the end.</p>
@@ -245,8 +254,8 @@ function showResult(data, originalFileName) {
   // Create download buttons for each format
   const downloadButtons = formats.map((format) =>
     `
-      <button class="btn download-btn" data-format="${format}" data-filename="${fileName}">
-        <span class="material-icons">download</span> ${fileName}.${format}
+      <button class="btn download-btn" data-format="${escapeHtml(format)}" data-filename="${escapeHtml(fileName)}">
+        <span class="material-icons" aria-hidden="true">download</span> ${escapeHtml(fileName)}.${escapeHtml(format)}
       </button>
     `
   ).join('');
@@ -258,7 +267,7 @@ function showResult(data, originalFileName) {
   resultDiv.className = 'success';
   resultDiv.innerHTML = `
     <strong>
-      <span class="material-icons">check_circle</span> Transcription Complete!
+      <span class="material-icons" aria-hidden="true">check_circle</span> Transcription Complete!
     </strong>
     ${durationText}
     ${warningHtml}
@@ -266,7 +275,7 @@ function showResult(data, originalFileName) {
       ${downloadButtons}
     </div>
     <div class="transcription-preview">
-      <strong>Preview (${previewFormat}):</strong>
+      <strong>Preview (${escapeHtml(previewFormat)}):</strong>
       <pre>${escapeHtml(previewContent)}</pre>
     </div>
   `;
@@ -290,15 +299,12 @@ function showResult(data, originalFileName) {
   });
 }
 
-// Escape HTML to prevent XSS in preview
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// File selection
-browseBtn.addEventListener('click',  () => fileInput.click());
+// File selection: the whole drop area is clickable, as its text says; the button inside handles itself
+browseBtn.addEventListener('click', () => fileInput.click());
+fileSelectArea.addEventListener('click', (event) => {
+  if (event.target.closest('button') || fileSelectArea.classList.contains('disabled')) return;
+  fileInput.click();
+});
 transcribeBtn.addEventListener('click', uploadFile);
 
 fileInput.addEventListener('change', (event) => {
@@ -328,24 +334,11 @@ fileSelectArea.addEventListener('drop', (event) => {
   }
 });
 
-// Error handler functions
-function showError(title, message, hint) {
-  resultDiv.className = 'error';
-  resultDiv.innerHTML = `
-    <span class="material-icons">error</span>
-    <strong>${title}</strong>
-    <p>${message}</p>
-    <p class="error-hint">
-      <span class="material-icons">lightbulb</span> ${hint}
-    </p>
-  `;
-}
-
 // Handle HTTP errors based on status code
 async function handleHttpError(response, fileSizeMB) {
   const status = response.status;
 
-  // Try to get error message form respinse body
+  // Try to get error message from response body
   let serverMessage = '';
   try {
     const data = await response.json();
@@ -357,6 +350,7 @@ async function handleHttpError(response, fileSizeMB) {
   switch (status) {
     case 400:
       showError(
+        resultDiv,
         'Invalid Request',
         serverMessage || 'The server could not process your request.',
         'Make sure you selected a valid audio file.'
@@ -365,6 +359,7 @@ async function handleHttpError(response, fileSizeMB) {
 
     case 413:
       showError(
+        resultDiv,
         'File Too Large',
         `The file (${fileSizeMB.toFixed(1)} MB) exceeds the server limit of ${appSettings.maxFileSizeMB} MB.`,
         'Try compressing the audio or splitting it into smaller parts.'
@@ -373,6 +368,7 @@ async function handleHttpError(response, fileSizeMB) {
 
     case 500:
       showError(
+        resultDiv,
         'Server Error',
         serverMessage || 'Something went wrong on the server.',
         'Please try again. If the problem persists, contact your administrator.'
@@ -383,6 +379,7 @@ async function handleHttpError(response, fileSizeMB) {
     case 503:
     case 504:
       showError(
+        resultDiv,
         'Server Unavailable',
         'The server is temporarily unavailable.',
         'Please wait a moment and try again.'
@@ -391,6 +388,7 @@ async function handleHttpError(response, fileSizeMB) {
 
     default:
       showError(
+        resultDiv,
         `Error (${status})`,
         serverMessage || 'An unexpected error occurred.',
         'Please try again or contact your administrator.'
@@ -400,35 +398,43 @@ async function handleHttpError(response, fileSizeMB) {
 
 // Handle network errors (e.g., connection issues, timeouts)
 function handleNetworkError(error) {
+  if (error instanceof JobFailedError) {
+    showError(
+      resultDiv,
+      'Transcription Failed',
+      error.message,
+      'Please try again. If the problem persists, contact your administrator.'
+    );
+    return;
+  }
+
   console.error('Network error:', error);
 
   // Check for specific error types
   if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
     showError(
+      resultDiv,
       'Connection Failed',
       'Could not connect to the server.',
       'Check your network connection or verify the server is running.'
     );
   } else if (error.name === 'AbortError') {
     showError(
+      resultDiv,
       'Upload Cancelled',
       'The upload was cancelled.',
       'Please try again.'
     );
   } else if (error.message.includes('timeout')) {
     showError(
+      resultDiv,
       'Connection Timeout',
       'The server took too long to respond.',
       'The server might be busy. Please try again in a moment.'
     );
-  } else if (error.message.includes('process')) {
-    showError(
-      'Processing Failed',
-      'The server failed to process the file.',
-      'Please try again. If the problem persists, contact your administrator.'
-    );
   } else {
     showError(
+      resultDiv,
       'Unexpected Error',
       error.message || 'Something went wrong.',
       'Please try again. If the problem persists, contact your administrator.'

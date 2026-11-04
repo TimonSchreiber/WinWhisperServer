@@ -3,6 +3,12 @@
 ### Get settings
 GET {{host}}/api/settings
 
+### Usage analytics (recent window defaults to 30 days)
+GET {{host}}/api/analytics
+
+### Usage analytics for the last 7 days
+GET {{host}}/api/analytics?days=7
+
 ### Upload file
 POST {{host}}/api/upload
 Content-Type: multipart/form-data; boundary=boundary

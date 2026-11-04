@@ -1,0 +1,352 @@
+.muted {
+  color: #666;
+  font-size: 14px;
+  margin: 0;
+}
+
+.container h2 {
+  font-size: 18px;
+  margin: 28px 0 12px 0;
+}
+
+/* Toolbar */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 20px 0;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid #007bff;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.segmented button {
+  background: white;
+  color: #007bff;
+  border: none;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid #007bff;
+}
+
+.segmented button:hover:not(.active) {
+  background: #f0f7ff;
+}
+
+.segmented button.active {
+  background: #007bff;
+  color: white;
+}
+
+.segmented.small button {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+  color: #666;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Icon with a text label, e.g. the CSV download, pushed to the right end of the toolbar */
+.icon-btn.labeled {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 6px 10px;
+  color: #007bff;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Reuses the spin keyframes from shared/base.css */
+.icon-btn.loading .material-icons {
+  animation: spin 0.8s linear infinite;
+}
+
+/* Current queue state */
+
+.current-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 15px;
+}
+
+.current-state.idle {
+  background: #d4edda;
+  color: #155724;
+}
+
+.current-state.busy {
+  background: #fff3cd;
+  color: #856404;
+}
+
+/* Last refresh failed: the figures below are outdated */
+.current-state.stale {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* Summary cards */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.card-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+  font-size: 13px;
+}
+
+.card-value {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 8px 0 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-sub {
+  color: #666;
+  font-size: 13px;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0 0;
+  color: #856404;
+  font-size: 13px;
+}
+
+/* Per-day chart: plain HTML bars, no chart library (offline) */
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 28px 0 12px 0;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.chart-max {
+  display: block;
+  height: 20px;
+  color: #888;
+  font-size: 12px;
+}
+
+.chart-bars {
+  display: flex;
+  align-items: stretch;
+  height: 160px;
+  margin-bottom: 26px; /* room for the date labels */
+  border-top: 1px dashed #ddd;
+  border-bottom: 1px solid #bbb;
+}
+
+.bar-column {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px 3px 0 0;
+  background: none;
+  cursor: pointer;
+}
+
+.bar-column:hover {
+  background: #f0f7ff;
+}
+
+/* The day currently described in the panel below the chart, in the panel's colour */
+.bar-column.active {
+  background: #e7f1ff;
+}
+
+/* --bar-height is set per column by analytics/index.js and shared with the value badge */
+.bar {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(76%, 40px);
+  height: var(--bar-height, 0%);
+  border-radius: 2px 2px 0 0;
+  background: #007bff;
+}
+
+.bar.empty {
+  height: 2px;
+  background: #ddd;
+}
+
+.bar-column.active .bar:not(.empty) {
+  background: #0056b3;
+}
+
+.bar-value {
+  display: none;
+  position: absolute;
+  bottom: calc(var(--bar-height, 0%) + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #0056b3;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.bar-column.active .bar-value {
+  display: block;
+}
+
+.bar-label {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: #666;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Keep the outermost labels and badges inside the chart instead of centering them past its edges */
+.bar-column:first-child .bar-label,
+.bar-column:first-child .bar-value {
+  left: 0;
+  transform: none;
+}
+
+.bar-column:last-child .bar-label,
+.bar-column:last-child .bar-value {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Panel for the active day, coloured like the active column so the two read as one */
+.day-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 40px;
+  padding: 10px 14px;
+  border-left: 3px solid #0056b3;
+  border-radius: 4px;
+  background: #e7f1ff;
+  font-size: 14px;
+}
+
+.day-detail .material-icons {
+  color: #0056b3;
+}
+
+.day-detail-hint {
+  margin-left: auto;
+  color: #666;
+  font-size: 12px;
+}
+
+/* Details table */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.details-table th,
+.details-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+.details-table th {
+  color: #666;
+  font-weight: 600;
+  border-bottom-color: #ccc;
+}
+
+.details-table th:not(:first-child),
+.details-table td:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small screens: shared/base.css margins are sized for desktop */
+
+@media (max-width: 480px) {
+  body {
+    margin: 0 auto;
+    padding: 8px;
+  }
+
+  .container {
+    padding: 18px;
+  }
+
+  .card-value {
+    font-size: 20px;
+  }
+}
